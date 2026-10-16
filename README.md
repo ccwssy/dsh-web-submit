@@ -16,8 +16,8 @@
 | `GET` | `/x/headless/events?sessionId=...` | SSE 实时事件流,`turn/end` 后结束 |
 | `GET` | `/x/headless/health` | 插件状态与凭证模式 |
 
-仅接受回环请求(`127.0.0.1` / `localhost`),与内置 `/api` 同等信任姿态:
-`Host` 头不是回环地址时一律返回 403。
+仅接受回环请求:`Host` 头不是回环地址(`127.0.0.1` / `localhost`)时一律返回 403。
+这里只做回环校验、不额外鉴权(面向本机 CLI);插件内部调用 `/api` 所需的签名 Cookie 由插件自己换取,见下节。
 
 ## 与 harness 的通信方式
 
@@ -35,6 +35,17 @@
 参数包在 `args.request` 里,历史读取改用 `session.page`(需要 `address` 与日志切点 `throughSeq`)。
 插件会逐层探测并记住该 harness 实际使用的拼写与信封,两代都能工作。
 
+## 适配的 dsh 版本
+
+| dsh 版本 | `/api` 鉴权 | 端点与参数 | 状态 |
+|---|---|---|---|
+| `0.2.1-alpha.4`(本仓库实测版本) | 必须带签名 Cookie,插件用进程内启动令牌自动换取 | typert 端点 `session/create`、`session/prompt`;参数包在 `args.request`;历史读取走 `session.page`(`address` + `throughSeq`) | 已端到端实测通过 |
+| 更早的 `0.2.x` | `/api` 在回环上开放,插件跳过换取直接请求 | 点号端点 `session.create`、`session.prompt`;参数放 payload 顶层;历史走 `session.history` | 保留兼容分支,未逐版回归 |
+
+`package.json` 声明 `dsh.engines.dsh >= 0.2.0-rc.2`、Node `>=20`。
+插件不写死某一代契约:首次调用时按 404 与信封报错逐层探测(端点拼写 / `args` 包装 / `request` 包装),
+成功一次后缓存复用,因此新老两代 harness 都能工作。
+
 ## 安装
 
 直接安装本仓库:
@@ -43,14 +54,15 @@
 dsh plugin --profile web add git+https://github.com/ccwssy/dsh-web-submit.git
 ```
 
-或先克隆,再按本地路径安装:
+或先克隆,再用**绝对路径**安装 —— `dsh plugin` 的 pnpm 在 profile 目录(`$DSH_HOME/profiles/web`)下运行,
+`file:` 写相对路径会被解析到 profile 目录里,而不是你当前所在的 shell 目录:
 
 ```bash
 git clone https://github.com/ccwssy/dsh-web-submit.git
-dsh plugin --profile web add file:./dsh-web-submit
+dsh plugin --profile web add "file:$PWD/dsh-web-submit"
 ```
 
-Windows:`dsh plugin --profile web add file:C:/path/to/dsh-web-submit`(换成克隆后的实际路径)。
+Windows:`dsh plugin --profile web add file:C:/path/to/dsh-web-submit`(换成克隆后的绝对路径)。
 
 `dsh plugin add` 会自动应用 bundle patch 规则(`cordis.patch.yml`),无需手工修改宿主 profile。
 重启 `dsh web` 后生效。
@@ -69,6 +81,8 @@ curl -sN "http://127.0.0.1:3080/x/headless/events?sessionId=session-xxx"
 # 查看插件是否加载、凭证处于什么模式
 curl -s http://127.0.0.1:3080/x/headless/health
 ```
+
+示例里的 `preset` 由你的 profile 决定(例如本机 web profile 用的是 `liangshen`),省略则用 profile 的默认预设。
 
 任务执行期间打开 Web UI:该会话与你手工输入的任务一样实时可见。
 
@@ -92,9 +106,11 @@ curl -s http://127.0.0.1:3080/x/headless/health
 - **文档**:补全 Linux/macOS 与 Windows 的真实安装路径、配置表,删除过时的 `ApiProxyService` 说法;
   README 默认中文,英文版见 [README.en.md](README.en.md)。
 
-已对照 dsh 0.2.1-alpha.4 核对 RPC 契约:`session.create`(`cwd`、`agentPreset`)、
-`session.prompt`(`mode: queue|steer`、`content`)、`session.history`(`maxMessages`),
-以及 `{type:"server-response", rpcId, result:{ok, value}}` 响应封套均未改变。
+在 dsh 0.2.1-alpha.4 上端到端实测:`POST /x/headless` 创建会话并排队任务、`/status` 读回完整事件、`/events` 正常流出 SSE。
+实际使用的契约是 `session/create`(`request.cwd`、`request.agentPreset`)、
+`session/prompt`(`request: { requestId, sessionId, mode: queue|steer, content }`)、
+`session/page`(`request: { address, throughSeq, maxMessages }`),响应封套为
+`{type:"server-response", rpcId, result:{ok, value}}`。
 
 ## 许可证
 

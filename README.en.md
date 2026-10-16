@@ -18,9 +18,10 @@ No separate headless process, no webhook glue: one plugin, four endpoints.
 | `GET` | `/x/headless/events?sessionId=...` | SSE live event stream; ends after `turn/end` |
 | `GET` | `/x/headless/health` | Plugin state and credential mode |
 
-Loopback requests only (`127.0.0.1` / `localhost`), same trust posture as the
-built-in `/api` surface: every endpoint is refused unless the `Host` header is
-a loopback authority.
+Loopback requests only: every endpoint is refused unless the `Host` header is a
+loopback authority (`127.0.0.1` / `localhost`). That is a loopback check, not an
+additional credential — the endpoints serve a local CLI, and the signed cookie
+the plugin needs for `/api` is minted by the plugin itself (next section).
 
 ## How it talks to the harness
 
@@ -46,6 +47,18 @@ history through `session.page` (which needs an `address` and an inclusive log
 cut `throughSeq`). The plugin probes and remembers both the spelling and the
 envelope this harness uses, so either generation works.
 
+## dsh compatibility
+
+| dsh version | `/api` authentication | Endpoints and arguments | Status |
+|---|---|---|---|
+| `0.2.1-alpha.4` (tested here) | Signed cookie required; the plugin mints it in-process from the launch token | typert endpoints `session/create`, `session/prompt`; arguments wrapped as `args.request`; history via `session.page` (`address` + `throughSeq`) | Verified end to end |
+| earlier `0.2.x` | `/api` is open on loopback; the exchange is skipped | dotted endpoints `session.create`, `session.prompt`; arguments at the payload top level; history via `session.history` | Compatibility branch kept, not regression-tested per release |
+
+`package.json` declares `dsh.engines.dsh >= 0.2.0-rc.2` and Node `>=20`.
+The plugin hard-codes neither generation: on the first call it probes outward
+(endpoint spelling, `args` envelope, `request` envelope) and caches whatever
+worked, so both harness generations keep working.
+
 ## Install
 
 Install this repository directly:
@@ -54,14 +67,16 @@ Install this repository directly:
 dsh plugin --profile web add git+https://github.com/ccwssy/dsh-web-submit.git
 ```
 
-Or clone it first and install from the local path:
+Or clone it first and install with an **absolute path** — `dsh plugin` runs pnpm
+inside the profile directory (`$DSH_HOME/profiles/web`), so a relative `file:`
+argument resolves there, not in the shell directory you are standing in:
 
 ```bash
 git clone https://github.com/ccwssy/dsh-web-submit.git
-dsh plugin --profile web add file:./dsh-web-submit
+dsh plugin --profile web add "file:$PWD/dsh-web-submit"
 ```
 
-Windows: `dsh plugin --profile web add file:C:/path/to/dsh-web-submit` (use the path you cloned to).
+Windows: `dsh plugin --profile web add file:C:/path/to/dsh-web-submit` (use the absolute path you cloned to).
 
 The bundle patch rule (`cordis.patch.yml`) is applied automatically by
 `dsh plugin add`, so no manual edit to the host profile is needed.
@@ -81,6 +96,9 @@ curl -sN "http://127.0.0.1:3080/x/headless/events?sessionId=session-xxx"
 # check the plugin is loaded and how it authenticated
 curl -s http://127.0.0.1:3080/x/headless/health
 ```
+
+The `preset` in the example is your profile's own (this machine's web profile uses
+`liangshen`); omit it to take the profile's default preset.
 
 While it runs, open the Web UI: the session is visible in real time, exactly
 as if you had typed the task there.
@@ -115,10 +133,13 @@ as if you had typed the task there.
   completed, stale `ApiProxyService` claim removed, Chinese is now the default
   README language (this file is the English one).
 
-Verified RPC contract against dsh 0.2.1-alpha.4: `session.create` (`cwd`,
-`agentPreset`), `session.prompt` (`mode: queue|steer`, `content`),
-`session.history` (`maxMessages`), and the
-`{type: "server-response", rpcId, result: {ok, value}}` envelope are unchanged.
+Verified end to end on dsh 0.2.1-alpha.4: `POST /x/headless` creates the session and
+queues the task, `/status` reads the full event list back, `/events` streams SSE.
+The contract actually used is `session/create` (`request.cwd`,
+`request.agentPreset`), `session/prompt` (`request: { requestId, sessionId,
+mode: queue|steer, content }`), `session/page` (`request: { address,
+throughSeq, maxMessages }`), with the
+`{type: "server-response", rpcId, result: {ok, value}}` envelope.
 
 ## License
 
