@@ -42,7 +42,9 @@
 | `0.2.1-alpha.4`(本仓库实测版本) | 必须带签名 Cookie,插件用进程内启动令牌自动换取 | typert 端点 `session/create`、`session/prompt`;参数包在 `args.request`;历史读取走 `session.page`(`address` + `throughSeq`) | 已端到端实测通过 |
 | 更早的 `0.2.x` | `/api` 在回环上开放,插件跳过换取直接请求 | 点号端点 `session.create`、`session.prompt`;参数放 payload 顶层;历史走 `session.history` | 保留兼容分支,未逐版回归 |
 
-`package.json` 声明 `dsh.engines.dsh >= 0.2.0-rc.2`、Node `>=20`。
+`package.json` 声明 `dsh.engines.dsh >= 0.2.0-rc.2`、Node `>=20`。插件自身的 npm 依赖只有
+`@deepseek-ai/schemastery`;`@deepseek-ai/dsh` 是宿主提供的 peer,已标记 `optional`,
+避免安装时被 pnpm 连带拉下整个 dsh 依赖树。
 插件不写死某一代契约:首次调用时按 404 与信封报错逐层探测(端点拼写 / `args` 包装 / `request` 包装),
 成功一次后缓存复用,因此新老两代 harness 都能工作。
 

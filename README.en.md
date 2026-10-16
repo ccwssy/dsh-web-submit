@@ -54,7 +54,10 @@ envelope this harness uses, so either generation works.
 | `0.2.1-alpha.4` (tested here) | Signed cookie required; the plugin mints it in-process from the launch token | typert endpoints `session/create`, `session/prompt`; arguments wrapped as `args.request`; history via `session.page` (`address` + `throughSeq`) | Verified end to end |
 | earlier `0.2.x` | `/api` is open on loopback; the exchange is skipped | dotted endpoints `session.create`, `session.prompt`; arguments at the payload top level; history via `session.history` | Compatibility branch kept, not regression-tested per release |
 
-`package.json` declares `dsh.engines.dsh >= 0.2.0-rc.2` and Node `>=20`.
+`package.json` declares `dsh.engines.dsh >= 0.2.0-rc.2` and Node `>=20`. The only npm
+dependency the plugin itself needs is `@deepseek-ai/schemastery`; `@deepseek-ai/dsh`
+is a host-provided peer marked `optional`, so pnpm does not drag the whole dsh
+dependency tree in during install.
 The plugin hard-codes neither generation: on the first call it probes outward
 (endpoint spelling, `args` envelope, `request` envelope) and caches whatever
 worked, so both harness generations keep working.

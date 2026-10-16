@@ -10,6 +10,11 @@
   "peerDependencies": {
     "@deepseek-ai/dsh": ">=0.2.0-rc.2"
   },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
   "dsh": {
     "engines": {
       "dsh": ">=0.2.0-rc.2"
