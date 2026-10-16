@@ -2,20 +2,27 @@
  * dsh-web-submit — DeepSeek Harness plugin.
  *
  * Lets an external command line (or any HTTP client) run a task through the
- * LIVE `dsh web` process instead of a separate headless process:
+ * LIVE dsh web process instead of a separate headless process:
  *
  *   POST /x/headless            { task, cwd?, preset?, mode? } -> { sessionId }
  *   GET  /x/headless/status     ?sessionId=...  -> latest session events
  *   GET  /x/headless/events     ?sessionId=...  -> SSE live event stream
+ *   GET  /x/headless/health                     -> plugin and credential state
  *
  * Because the session is created inside the web process itself, the Web UI
- * shows it in real time (same live_sessions store, same event broadcast), and
+ * shows it in real time (same session store, same event stream), and
  * permission / approval questions appear in the Web UI for the user.
  *
- * The plugin drives the process's own built-in /api RPC surface over a
- * loopback HTTP request (same paths dsh-x / the web UI client use), which
- * keeps it in exact sync with the UI and needs no private service wiring.
- * Loopback requests only.
+ * Authentication. Since dsh 0.2.1-alpha.4 the /api RPC surface is fenced by
+ * Connection.admit(), which requires the signed cookie minted from the
+ * process launch token, and that token is process-local and never written to
+ * disk. A plugin living inside the process therefore asks the connection
+ * service for the tokenized URL (HostConnectionService.authenticatedUrl),
+ * exchanges it once at /connect, and replays the resulting cookie on every
+ * /api request. On harnesses whose /api is open on loopback the exchange is
+ * skipped and requests go out bare, so the plugin keeps working there too.
+ *
+ * Loopback requests only (127.0.0.1 / localhost).
  */
 import z from "@deepseek-ai/schemastery";
 import { randomUUID } from "node:crypto";
@@ -33,7 +40,7 @@ export const Config = z.object({
 function isLoopbackHost(host) {
   if (!host) return false;
   try {
-    const u = new URL(`http://${host}`);
+    const u = new URL("http://" + host);
     return u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "::1";
   } catch {
     return false;
@@ -73,16 +80,82 @@ function sendJson(res, status, body) {
   res.end(payload);
 }
 
+/** Every Set-Cookie the response carries, across Node versions. */
+function readSetCookies(headers) {
+  if (typeof headers.getSetCookie === "function") return headers.getSetCookie();
+  const single = headers.get("set-cookie");
+  return single === null ? [] : [single];
+}
+
 export async function apply(ctx, config) {
   const prefix = config.routePrefix.replace(/\/+$/, "");
-  const HEADLESS = `${prefix}/headless`;
-  const STATUS = `${prefix}/headless/status`;
-  const EVENTS = `${prefix}/headless/events`;
+  const HEADLESS = prefix + "/headless";
+  const STATUS = prefix + "/headless/status";
+  const EVENTS = prefix + "/headless/events";
+  const HEALTH = prefix + "/headless/health";
+
+  /** Signed browser/API credential for this process's /api surface, once minted. */
+  let credential;
+  let credentialExchange;
+
+  function baseUrl() {
+    const protocol = ctx.webServer.protocol ?? "http:";
+    return protocol + "//127.0.0.1:" + ctx.webServer.port;
+  }
+
+  /**
+   * Mint the /api credential from this process's own launch token: ask the
+   * in-process connection service for the tokenized /connect URL, then keep
+   * the cookie it sets. Returns false when the harness does not need one
+   * (older 0.2.x, where /api is open on loopback).
+   */
+  async function exchangeCredential() {
+    const connection = ctx.get("connection") ?? ctx.root?.get?.("connection");
+    if (connection === void 0 || typeof connection.authenticatedUrl !== "function") return false;
+    const connect = new URL("/connect", baseUrl());
+    connect.searchParams.set("interactions", "answer");
+    const res = await fetch(connection.authenticatedUrl(connect.href), {
+      method: "GET",
+      redirect: "manual",
+    });
+    if (res.status < 300 || res.status >= 400) {
+      throw new Error("credential exchange failed: HTTP " + res.status);
+    }
+    const cookies = readSetCookies(res.headers)
+      .map((value) => value.split(";")[0].trim())
+      .filter(Boolean);
+    if (cookies.length === 0) throw new Error("credential exchange returned no session cookie");
+    credential = cookies.join("; ");
+    return true;
+  }
+
+  function credentialReady() {
+    if (credentialExchange === void 0) {
+      credentialExchange = exchangeCredential().catch((error) => {
+        credentialExchange = void 0;
+        throw error;
+      });
+    }
+    return credentialExchange;
+  }
+
+  /** One call to the harness's own /api surface, re-authenticating at most once. */
+  async function apiFetch(path, init, retried = false) {
+    const headers = { ...(init && init.headers) };
+    if (credential !== void 0) headers.cookie = credential;
+    const res = await fetch(baseUrl() + path, { ...init, headers });
+    if (res.status === 401 && !retried) {
+      credential = void 0;
+      credentialExchange = void 0;
+      await credentialReady();
+      return apiFetch(path, init, true);
+    }
+    return res;
+  }
 
   /** In-process RPC against the harness's own /api surface. */
   async function rpc(method, payload) {
-    const base = `http://127.0.0.1:${ctx.webServer.port}`;
-    const res = await fetch(`${base}/api/${method}`, {
+    const res = await apiFetch("/api/" + method, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -92,12 +165,21 @@ export async function apply(ctx, config) {
         payload,
       }),
     });
-    const resp = await res.json();
-    const result = resp && resp.result;
-    if (!result || !result.ok) {
-      const err = result && result.error;
+    const text = await res.text();
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
       throw new Error(
-        err && err.message ? err.message : JSON.stringify(err || resp || "rpc failed"),
+        "/api/" + method + " returned HTTP " + res.status + ": " +
+          (text.trim().slice(0, 200) || "(empty body)"),
+      );
+    }
+    const result = body && body.result;
+    if (!result || !result.ok) {
+      const error = result && result.error;
+      throw new Error(
+        error && error.message ? error.message : JSON.stringify(error || body || "rpc failed"),
       );
     }
     return result.value;
@@ -114,6 +196,18 @@ export async function apply(ctx, config) {
         }
         const url = new URL(req.url, "http://localhost");
         const path = url.pathname;
+
+        // GET /x/headless/health : plugin and credential state.
+        if (req.method === "GET" && path === HEALTH) {
+          sendJson(res, 200, {
+            ok: true,
+            plugin: name,
+            routePrefix: prefix,
+            port: ctx.webServer.port ?? null,
+            credential: credential === void 0 ? "pending" : "session-cookie",
+          });
+          return;
+        }
 
         // POST /x/headless : create a session in the web process and prompt it.
         if (req.method === "POST" && path === HEADLESS) {
@@ -198,7 +292,7 @@ export async function apply(ctx, config) {
                 if (seen.has(ev.seq)) continue;
                 seen.add(ev.seq);
                 const frame = { type: ev.type, seq: ev.seq, time: ev.time, data: ev.data };
-                res.write(`data: ${JSON.stringify(frame)}\n\n`);
+                res.write("data: " + JSON.stringify(frame) + "\n\n");
                 if (ev.type === "turn/end") {
                   sawEnd = true;
                   drain = 0;
@@ -207,7 +301,7 @@ export async function apply(ctx, config) {
               if (sawEnd) {
                 drain += 1;
                 if (drain >= 3) {
-                  res.write(`data: ${JSON.stringify({ type: "stream/end", sessionId: sid })}\n\n`);
+                  res.write("data: " + JSON.stringify({ type: "stream/end", sessionId: sid }) + "\n\n");
                   break;
                 }
               }
