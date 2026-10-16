@@ -84,7 +84,7 @@ curl -sN "http://127.0.0.1:3080/x/headless/events?sessionId=session-xxx"
 curl -s http://127.0.0.1:3080/x/headless/health
 ```
 
-示例里的 `preset` 由你的 profile 决定(例如本机 web profile 用的是 `liangshen`),省略则用 profile 的默认预设。
+示例里的 `preset` 由你的 profile 决定(填 profile 里实际配置的预设名),省略则用 profile 的默认预设。
 
 任务执行期间打开 Web UI:该会话与你手工输入的任务一样实时可见。
 

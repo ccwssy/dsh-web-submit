@@ -100,8 +100,8 @@ curl -sN "http://127.0.0.1:3080/x/headless/events?sessionId=session-xxx"
 curl -s http://127.0.0.1:3080/x/headless/health
 ```
 
-The `preset` in the example is your profile's own (this machine's web profile uses
-`liangshen`); omit it to take the profile's default preset.
+The `preset` in the example is your profile's own (use whatever preset name your
+profile configures); omit it to take the profile's default preset.
 
 While it runs, open the Web UI: the session is visible in real time, exactly
 as if you had typed the task there.
