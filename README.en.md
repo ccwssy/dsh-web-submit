@@ -114,7 +114,7 @@ as if you had typed the task there.
 | `maxBodyBytes` | `1048576` | Max request body size |
 | `pollIntervalMs` | `1500` | Poll interval behind the SSE stream |
 
-## Fork changes (ccwssy/dsh-web-submit, 0.2.0)
+## Fork changes (ccwssy/dsh-web-submit, 0.2.1)
 
 - **Fixed the dead `/api` path.** The plugin used to POST to `/api/<method>` with
   no credentials. Since dsh 0.2.1-alpha.4 that surface answers `401 unauthorized`
@@ -135,6 +135,9 @@ as if you had typed the task there.
 - Documentation: real install paths for Linux/macOS and Windows, config table
   completed, stale `ApiProxyService` claim removed, Chinese is now the default
   README language (this file is the English one).
+- **Bilingual plugin description**: `package.json` `description` now carries the
+  Chinese and English text in one line, visible in the GUI component panel and in
+  plugin marketplaces.
 
 Verified end to end on dsh 0.2.1-alpha.4: `POST /x/headless` creates the session and
 queues the task, `/status` reads the full event list back, `/events` streams SSE.

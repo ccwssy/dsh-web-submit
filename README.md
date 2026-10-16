@@ -96,7 +96,7 @@ curl -s http://127.0.0.1:3080/x/headless/health
 | `maxBodyBytes` | `1048576` | 请求体上限 |
 | `pollIntervalMs` | `1500` | SSE 背后的轮询间隔 |
 
-## 本 fork 的改动(ccwssy/dsh-web-submit,0.2.0)
+## 本 fork 的改动(ccwssy/dsh-web-submit,0.2.1)
 
 - **修复失效的 `/api` 通路**:原版不带任何凭证 POST `/api/<method>`;自 dsh 0.2.1-alpha.4 起该通路返回
   `401 unauthorized`(已在真实 3080 实例上复现),于是 `POST /x/headless` 永远返回 500。
@@ -107,6 +107,7 @@ curl -s http://127.0.0.1:3080/x/headless/health
 - **声明依赖**(`@deepseek-ai/schemastery`、peer `@deepseek-ai/dsh`、Node `>=20`),不再依赖宿主提升。
 - **文档**:补全 Linux/macOS 与 Windows 的真实安装路径、配置表,删除过时的 `ApiProxyService` 说法;
   README 默认中文,英文版见 [README.en.md](README.en.md)。
+- **插件描述中英双语**:`package.json` 的 `description` 一行内同时给出中文与英文,GUI 组件面板与插件市场直接可见。
 
 在 dsh 0.2.1-alpha.4 上端到端实测:`POST /x/headless` 创建会话并排队任务、`/status` 读回完整事件、`/events` 正常流出 SSE。
 实际使用的契约是 `session/create`(`request.cwd`、`request.agentPreset`)、
