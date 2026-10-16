@@ -88,11 +88,6 @@ curl -s http://127.0.0.1:3080/x/headless/health
 
 任务执行期间打开 Web UI:该会话与你手工输入的任务一样实时可见。
 
-## 面向自动化调用方
-
-Hermes 等自动化调用方的固定协作约定(端点、推荐流程、错误码、硬性约束)见
-[docs/hermes-integration.md](docs/hermes-integration.md)。
-
 ## 配置
 
 | 键 | 默认值 | 含义 |
