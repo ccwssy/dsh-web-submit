@@ -153,25 +153,33 @@ export async function apply(ctx, config) {
     return res;
   }
 
-  /** In-process RPC against the harness's own /api surface. */
-  async function rpc(method, payload) {
-    const res = await apiFetch("/api/" + method, {
+  /**
+   * Endpoint spelling each logical method is served under on this harness.
+   * Old builds register "session.create"; current builds register the typert
+   * spelling "session/create". The first successful call wins and is reused.
+   */
+  const wireEndpoints = new Map();
+
+  /** One RPC attempt against one exact endpoint spelling. */
+  async function rpcOnce(endpoint, payload) {
+    const res = await apiFetch("/api/" + endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         type: "client-request",
         rpcId: randomUUID(),
-        method,
+        method: endpoint,
         payload,
       }),
     });
     const text = await res.text();
+    if (res.status === 404) return { missing: true };
     let body;
     try {
       body = JSON.parse(text);
     } catch {
       throw new Error(
-        "/api/" + method + " returned HTTP " + res.status + ": " +
+        "/api/" + endpoint + " returned HTTP " + res.status + ": " +
           (text.trim().slice(0, 200) || "(empty body)"),
       );
     }
@@ -182,7 +190,25 @@ export async function apply(ctx, config) {
         error && error.message ? error.message : JSON.stringify(error || body || "rpc failed"),
       );
     }
-    return result.value;
+    return { value: result.value };
+  }
+
+  /** In-process RPC against the harness's own /api surface. */
+  async function rpc(method, payload) {
+    const known = wireEndpoints.get(method);
+    const candidates =
+      known !== void 0
+        ? [known]
+        : method.includes(".")
+          ? [method, method.replaceAll(".", "/")]
+          : [method];
+    for (const endpoint of candidates) {
+      const outcome = await rpcOnce(endpoint, payload);
+      if (outcome.missing === true) continue;
+      wireEndpoints.set(method, endpoint);
+      return outcome.value;
+    }
+    throw new Error("/api/" + candidates.join(" and ") + " returned HTTP 404: not found");
   }
 
   ctx.effect(() =>
