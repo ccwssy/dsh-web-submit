@@ -37,11 +37,20 @@
 
 ## 安装
 
+直接安装本仓库:
+
 ```bash
-dsh plugin --profile web add file:/path/to/dsh-web-submit
+dsh plugin --profile web add git+https://github.com/ccwssy/dsh-web-submit.git
 ```
 
-Windows:`dsh plugin --profile web add file:C:/path/to/dsh-web-submit`。
+或先克隆,再按本地路径安装:
+
+```bash
+git clone https://github.com/ccwssy/dsh-web-submit.git
+dsh plugin --profile web add file:./dsh-web-submit
+```
+
+Windows:`dsh plugin --profile web add file:C:/path/to/dsh-web-submit`(换成克隆后的实际路径)。
 
 `dsh plugin add` 会自动应用 bundle patch 规则(`cordis.patch.yml`),无需手工修改宿主 profile。
 重启 `dsh web` 后生效。

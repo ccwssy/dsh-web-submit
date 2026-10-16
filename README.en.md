@@ -48,11 +48,20 @@ envelope this harness uses, so either generation works.
 
 ## Install
 
+Install this repository directly:
+
 ```bash
-dsh plugin --profile web add file:/path/to/dsh-web-submit
+dsh plugin --profile web add git+https://github.com/ccwssy/dsh-web-submit.git
 ```
 
-Windows: `dsh plugin --profile web add file:C:/path/to/dsh-web-submit`.
+Or clone it first and install from the local path:
+
+```bash
+git clone https://github.com/ccwssy/dsh-web-submit.git
+dsh plugin --profile web add file:./dsh-web-submit
+```
+
+Windows: `dsh plugin --profile web add file:C:/path/to/dsh-web-submit` (use the path you cloned to).
 
 The bundle patch rule (`cordis.patch.yml`) is applied automatically by
 `dsh plugin add`, so no manual edit to the host profile is needed.
