@@ -154,13 +154,20 @@ export async function apply(ctx, config) {
   }
 
   /**
+  /**
    * Endpoint spelling each logical method is served under on this harness.
    * Old builds register "session.create"; current builds register the typert
    * spelling "session/create". The first successful call wins and is reused.
    */
   const wireEndpoints = new Map();
 
-  /** One RPC attempt against one exact endpoint spelling. */
+  /** Payload envelope: current builds wrap method arguments in { args }. */
+  let wrapArgs = true;
+
+  /** Parameter envelope: current typert methods take one named "request". */
+  let requestEnvelope = true;
+
+  /** One RPC attempt against one exact endpoint spelling and envelope. */
   async function rpcOnce(endpoint, payload) {
     const res = await apiFetch("/api/" + endpoint, {
       method: "POST",
@@ -169,7 +176,11 @@ export async function apply(ctx, config) {
         type: "client-request",
         rpcId: randomUUID(),
         method: endpoint,
-        payload,
+        payload: wrapArgs === true
+          ? { args: requestEnvelope === true ? { request: payload } : payload }
+          : requestEnvelope === true
+            ? { request: payload }
+            : payload,
       }),
     });
     const text = await res.text();
@@ -186,15 +197,22 @@ export async function apply(ctx, config) {
     const result = body && body.result;
     if (!result || !result.ok) {
       const error = result && result.error;
+      const message = error && error.message;
+      if (typeof message === "string" && message.includes("plain-object args field")) {
+        return { envelope: "args" };
+      }
+      if (typeof message === "string" && message.includes('missing "request"')) {
+        return { envelope: "request" };
+      }
       throw new Error(
-        error && error.message ? error.message : JSON.stringify(error || body || "rpc failed"),
+        message ? message : JSON.stringify(error || body || "rpc failed"),
       );
     }
     return { value: result.value };
   }
 
   /** In-process RPC against the harness's own /api surface. */
-  async function rpc(method, payload) {
+  async function rpc(method, payload, retried = false) {
     const known = wireEndpoints.get(method);
     const candidates =
       known !== void 0
@@ -205,10 +223,49 @@ export async function apply(ctx, config) {
     for (const endpoint of candidates) {
       const outcome = await rpcOnce(endpoint, payload);
       if (outcome.missing === true) continue;
+      if (outcome.envelope !== void 0) {
+        if (retried) throw new Error("unsupported RPC payload envelope");
+        if (outcome.envelope === "args") wrapArgs = !wrapArgs;
+        else requestEnvelope = !requestEnvelope;
+        return rpc(method, payload, true);
+      }
       wireEndpoints.set(method, endpoint);
       return outcome.value;
     }
     throw new Error("/api/" + candidates.join(" and ") + " returned HTTP 404: not found");
+  }
+
+  /** Inclusive log cut: a value at or beyond the newest sequence returns the tail. */
+  const MAX_SEQ = 9007199254740991;
+
+  /**
+   * Read a session event page. Current harnesses page a durable address
+   * ("session.page"); older ones returned "session.history" directly.
+   */
+  async function readHistory(sessionId, maxMessages) {
+    const request = {
+      address: { kind: "session", sessionId },
+      throughSeq: MAX_SEQ,
+      maxMessages,
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const page = await rpc("session.page", request);
+        return { events: page.records || [], hasMore: !!page.hasMore };
+      } catch (error) {
+        const message = String((error && error.message) || error);
+        // The log cut may not sit past the live cursor; the Host reports the cursor.
+        const cursor = message.match(/past cursor (\d+)/);
+        if (cursor !== null) {
+          request.throughSeq = Number(cursor[1]);
+          continue;
+        }
+        if (!message.includes("HTTP 404")) throw error;
+        const history = await rpc("session.history", { sessionId, maxMessages });
+        return { events: history.events || [], hasMore: !!history.hasMore };
+      }
+    }
+    throw new Error("session.page rejected every log cut");
   }
 
   ctx.effect(() =>
@@ -248,9 +305,11 @@ export async function apply(ctx, config) {
             if (body.preset) createReq.agentPreset = body.preset;
             const created = await rpc("session.create", createReq);
             await rpc("session.prompt", {
+              requestId: randomUUID(),
               sessionId: created.sessionId,
               mode: body.mode === "steer" ? "steer" : "queue",
               content: [{ type: "text", text: task }],
+              clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             });
             sendJson(res, 200, {
               ok: true,
@@ -271,10 +330,7 @@ export async function apply(ctx, config) {
             return;
           }
           try {
-            const history = await rpc("session.history", {
-              sessionId: sid,
-              maxMessages: 60,
-            });
+            const history = await readHistory(sid, 60);
             const events = (history.events || []).map((e) => {
               const ev = e.event || e;
               return { type: ev.type, seq: ev.seq, time: ev.time, data: ev.data };
@@ -309,10 +365,7 @@ export async function apply(ctx, config) {
           let drain = 0;
           try {
             while (!res.writableEnded) {
-              const history = await rpc("session.history", {
-                sessionId: sid,
-                maxMessages: 40,
-              });
+              const history = await readHistory(sid, 40);
               for (const e of history.events || []) {
                 const ev = e.event || e;
                 if (seen.has(ev.seq)) continue;

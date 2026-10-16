@@ -39,9 +39,12 @@ cannot: mint the `/api` credential from the process launch token.
 The credential comes from inside the process, so nothing is configured by hand
 and no token has to be copied around.
 
-**Endpoint spelling.** Old builds register `session.create`; current builds
-register the typert spelling `session/create`. The plugin tries both, keeps the
-spelling that worked, and reuses it for the rest of the process lifetime.
+**RPC contract.** Old builds register dotted endpoints (`session.create`) with
+arguments at the top level of the payload; current builds register the typert
+spelling (`session/create`) with arguments wrapped as `args.request`, and read
+history through `session.page` (which needs an `address` and an inclusive log
+cut `throughSeq`). The plugin probes and remembers both the spelling and the
+envelope this harness uses, so either generation works.
 
 ## Install
 
@@ -88,9 +91,11 @@ as if you had typed the task there.
   (reproduced against a live 3080 instance), so `POST /x/headless` always failed
   with HTTP 500. The plugin now mints and replays the signed session cookie
   in-process, with one automatic re-authentication per request.
-- **Adapted to the new endpoint spelling.** Current builds register the typert
-  endpoints (`session/create`); the plugin now picks between dot and slash
-  spellings and caches the one that worked.
+- **Adapted to the new RPC contract.** Current builds register the typert
+  endpoints (`session/create`), wrap arguments as `args.request`, and page
+  history through `session.page` (address plus an inclusive `throughSeq`, retried
+  with the cursor the Host reports). The plugin probes and caches both the
+  endpoint spelling and the envelope.
 - **Added `GET /x/headless/health`** so a caller can tell whether the plugin is
   loaded and which credential mode is active.
 - **Clearer `/api` failures**: a non-JSON response (for example the 401 body) is

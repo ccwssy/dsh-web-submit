@@ -31,8 +31,9 @@
 
 凭证完全来自进程内部,无需任何手工配置,也不用复制令牌。
 
-**端点拼写**:旧版注册 `session.create`,当前版本注册 typert 拼写 `session/create`。
-插件两种都试,首次成功后记住该 harness 的拼写并复用。
+**RPC 契约**:旧版注册点号端点(`session.create`),参数直接放在 payload 顶层;当前版本注册 typert 拼写(`session/create`),
+参数包在 `args.request` 里,历史读取改用 `session.page`(需要 `address` 与日志切点 `throughSeq`)。
+插件会逐层探测并记住该 harness 实际使用的拼写与信封,两代都能工作。
 
 ## 安装
 
@@ -75,7 +76,7 @@ curl -s http://127.0.0.1:3080/x/headless/health
 - **修复失效的 `/api` 通路**:原版不带任何凭证 POST `/api/<method>`;自 dsh 0.2.1-alpha.4 起该通路返回
   `401 unauthorized`(已在真实 3080 实例上复现),于是 `POST /x/headless` 永远返回 500。
   现在插件在进程内铸取并复用签名 Cookie,并在每次请求上自动重认证一次。
-- **适配端点拼写**:新版 typert 端点为 `session/create` 形式,插件自动在点号与斜杠两种拼写间选择并缓存。
+- **适配新的 RPC 契约**:新版端点为 `session/create` 形式、参数包在 `args.request` 里,历史读取走 `session.page`(需要 `address` + `throughSeq`,超出游标时按 Host 回报的游标重试)。插件自动探测端点拼写与信封并缓存。
 - **新增 `GET /x/headless/health`**:可判断插件是否加载、凭证处于什么模式。
 - **更清晰的 `/api` 错误**:非 JSON 响应(例如 401 正文)会报成 `HTTP <状态码>: <正文>`,不再是 JSON 解析错误。
 - **声明依赖**(`@deepseek-ai/schemastery`、peer `@deepseek-ai/dsh`、Node `>=20`),不再依赖宿主提升。
