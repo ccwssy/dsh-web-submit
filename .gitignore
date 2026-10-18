@@ -1,2 +1,17 @@
 node_modules/
 *.log
+
+# ── 内部产物：绝不进公开仓 ──
+# 施工书/任务书（含本机路径、主机名、内网 IP、内部流程名）
+docs/dsh-*.md
+docs/*prompt*.md
+docs/*-prompt.md
+# dsh 工作副产物
+log/
+.dsh-*
+.dispatch-dump/
+.dump-config*.yml
+# dsh 会话约束文件（内部注入，非仓库内容）
+AGENTS.md
+CLAUDE.md
+.dsh-chat-session

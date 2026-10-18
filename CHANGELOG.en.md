@@ -1,0 +1,64 @@
+# Changelog
+
+This repository is a fork of `deepseek-ai/dsh-web-submit` (maintained by the maintainer).
+Version numbers follow the plugin's own `package.json`. Usage and install: [README.en.md](README.en.md).
+
+## v0.2.4
+
+- **`POST /x/headless` takes an optional model**: the body accepts `provider` / `model` /
+  `reasoningEffort`; when any of them is present the plugin calls `session.selectModel` between
+  `session/create` and `session/prompt`, so the task runs on that model, and the response gains
+  `model` (`null` when unspecified). An absent `reasoningEffort` stays absent from the request, so
+  the harness resolves the model's own default effort.
+- **Omitting them changes nothing**: with none of the three fields present the plugin never calls
+  `session.selectModel`, so there is no side effect and existing callers keep working.
+- **Failures are never silent**: a failed selection answers `500` with `error` (carrying the
+  harness message), `sessionId` and `cleanup`, instead of reporting a submitted task; because this
+  harness has no session-delete RPC, the body states plainly that the session was created, no task was
+  sent, and nothing was cleaned up.
+
+## v0.2.3
+
+- **`defaultPermission` config**: give a permission preset name in the plugin config and every
+  session submitted through `POST /x/headless` takes it (the body's `permission` wins); empty by
+  default, so behaviour is unchanged. Set once to make an unattended entry never prompt.
+- **Permission docs**: the endpoint table and the new "Permissions and unattended runs" section
+  spell out the `permission` semantics, the verification command, and the sandbox cost.
+
+## v0.2.2
+
+- **Fixed the dead `/api` path.** The plugin used to POST to `/api/<method>` with
+  no credentials. Since dsh 0.2.1-alpha.4 that surface answers `401 unauthorized`
+  (reproduced against a live 3080 instance), so `POST /x/headless` always failed
+  with HTTP 500. The plugin now mints and replays the signed session cookie
+  in-process, with one automatic re-authentication per request.
+- **Adapted to the new RPC contract.** Current builds register the typert
+  endpoints (`session/create`), wrap arguments as `args.request`, and page
+  history through `session.page` (address plus an inclusive `throughSeq`, retried
+  with the cursor the Host reports). The plugin probes and caches both the
+  endpoint spelling and the envelope.
+- **Added `GET /x/headless/health`** so a caller can tell whether the plugin is
+  loaded and which credential mode is active.
+- **Added `GET /x/headless/active`**, listing sessions whose turn is still running,
+  so a restart can be deferred until nothing is in flight.
+- **Sessions join the workspace**: creation first resolves `workspace/create` for
+  the `cwd` and then creates the session under that `workspaceId`, so the Web UI
+  sidebar lists headless sessions.
+- **Clearer `/api` failures**: a non-JSON response (for example the 401 body) is
+  reported as `HTTP <status>: <body>` instead of a JSON parse error.
+- **Declared dependencies** (`@deepseek-ai/schemastery`, peer `@deepseek-ai/dsh`,
+  Node `>=20`) instead of relying on host hoisting.
+- Documentation: real install paths for Linux/macOS and Windows, config table
+  completed, stale `ApiProxyService` claim removed, Chinese is now the default
+  README language (this file is the English one).
+- **Bilingual plugin description**: `package.json` `description` now carries the
+  Chinese and English text in one line, visible in the GUI component panel and in
+  plugin marketplaces.
+
+Verified end to end on dsh 0.2.1-alpha.4: `POST /x/headless` creates the session and
+queues the task, `/status` reads the full event list back, `/events` streams SSE.
+The contract actually used is `session/create` (`request.cwd`,
+`request.agentPreset`), `session/prompt` (`request: { requestId, sessionId,
+mode: queue|steer, content }`), `session/page` (`request: { address,
+throughSeq, maxMessages }`), with the
+`{type: "server-response", rpcId, result: {ok, value}}` envelope.

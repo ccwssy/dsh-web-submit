@@ -4,7 +4,8 @@
  * Lets an external command line (or any HTTP client) run a task through the
  * LIVE dsh web process instead of a separate headless process:
  *
- *   POST /x/headless            { task, cwd?, preset?, mode? } -> { sessionId }
+ *   POST /x/headless            { task, cwd?, preset?, mode?, permission?,
+ *                                 provider?, model?, reasoningEffort? } -> { sessionId, model }
  *   GET  /x/headless/status     ?sessionId=...  -> latest session events
  *   GET  /x/headless/events     ?sessionId=...  -> SSE live event stream
  *   GET  /x/headless/health                     -> plugin and credential state
@@ -35,6 +36,8 @@ export const Config = z.object({
   routePrefix: z.string().default("/x"),
   maxBodyBytes: z.number().default(1_048_576),
   pollIntervalMs: z.number().default(1500),
+  /** Permission preset applied to submitted sessions without a body override. */
+  defaultPermission: z.string().default(""),
 });
 
 function isLoopbackHost(host) {
@@ -78,6 +81,17 @@ function sendJson(res, status, body) {
     "content-length": Buffer.byteLength(payload),
   });
   res.end(payload);
+}
+
+/**
+ * Type-only check for an optional body string: present means a non-empty
+ * string (surrounding blanks stripped). Anything else is a caller mistake.
+ */
+function optionalString(value) {
+  if (value === void 0 || value === null) return { present: false, ok: true, value: "" };
+  if (typeof value !== "string") return { present: true, ok: false, value: "" };
+  const trimmed = value.trim();
+  return { present: true, ok: trimmed !== "", value: trimmed };
 }
 
 /** Every Set-Cookie the response carries, across Node versions. */
@@ -432,19 +446,95 @@ export async function apply(ctx, config) {
               sendJson(res, 400, { ok: false, error: "missing 'task'" });
               return;
             }
+            const providerField = optionalString(body.provider);
+            const modelField = optionalString(body.model);
+            const effortField = optionalString(body.reasoningEffort);
+            const asked = providerField.present || modelField.present || effortField.present;
+            if (asked && !(providerField.ok && modelField.ok && effortField.ok)) {
+              sendJson(res, 400, {
+                ok: false,
+                error: "'provider', 'model' and 'reasoningEffort' must be non-empty strings",
+              });
+              return;
+            }
+            if (asked && (providerField.value === "" || modelField.value === "")) {
+              sendJson(res, 400, {
+                ok: false,
+                error: "'provider' and 'model' are required once any of the three model fields is sent",
+              });
+              return;
+            }
             const cwd = body.cwd || process.cwd();
             const workspaceId = await ensureWorkspace(cwd);
             const createReq = workspaceId === void 0 ? { cwd } : { workspaceId };
             if (body.preset) createReq.agentPreset = body.preset;
             const created = await rpc("session.create", createReq);
             if (workspaceId !== void 0) await attachSession(created.sessionId, workspaceId);
+            // Model selection is session-scoped and applies from the next request
+            // on, so it must land between create and prompt. All three fields
+            // absent means no call at all, and no side effect either.
+            let model = null;
+            if (asked) {
+              const selection = { provider: providerField.value, model: modelField.value };
+              // Absent reasoningEffort stays absent: the harness resolves its own
+              // default per model instead of being handed a made-up value.
+              if (effortField.value !== "") selection.reasoningEffort = effortField.value;
+              let picked;
+              try {
+                picked = await rpc("session.selectModel", {
+                  sessionId: created.sessionId,
+                  ...selection,
+                });
+              } catch (selectError) {
+                const message = String((selectError && selectError.message) || selectError);
+                // The harness exposes no session remove/delete RPC (its session
+                // controller offers list/search/create/selectModel/modelCatalog/
+                // rename/fork/prompt/updateQueue/cancel/attachment/page/
+                // projections/openWorkspacePath only), so an orphan session is
+                // returned to the caller instead of being cleaned up silently.
+                sendJson(res, 500, {
+                  ok: false,
+                  sessionId: created.sessionId,
+                  model: null,
+                  cleanup: "unavailable",
+                  error:
+                    "model selection failed for the new session; session was created in the Web UI " +
+                    "but no task was sent and it was not cleaned up automatically (the harness " +
+                    "offers no session delete/remove RPC): " + message,
+                });
+                return;
+              }
+              // rpc() hands back the remote value unwrapped; use the harness's
+              // normalized selection when it has the shape we expect, and the
+              // requested values otherwise.
+              const selected = picked && picked.selected;
+              model = selected && typeof selected.provider === "string" && typeof selected.model === "string"
+                ? {
+                    provider: selected.provider,
+                    model: selected.model,
+                    reasoningEffort: selected.reasoningEffort ?? null,
+                  }
+                : {
+                    provider: selection.provider,
+                    model: selection.model,
+                    reasoningEffort: selection.reasoningEffort ?? null,
+                  };
+            }
+            const requestedPermission = typeof body.permission === "string"
+              ? body.permission
+              : config.defaultPermission;
             let permission = null;
-            if (typeof body.permission === "string" && body.permission.trim() !== "") {
-              permission = body.permission.trim();
+            if (requestedPermission.trim() !== "") {
+              permission = requestedPermission.trim();
               if (!setSessionPermission(created.sessionId, permission)) {
                 sendJson(res, 500, {
                   ok: false,
-                  error: "cannot apply permission preset '" + permission + "' to the new session",
+                  sessionId: created.sessionId,
+                  cleanup: "unavailable",
+                  error:
+                    "cannot apply permission preset '" + permission + "' to the new session; " +
+                    "session was created in the Web UI but no task was sent and it was not " +
+                    "cleaned up automatically (the harness offers no session delete/remove RPC)",
                 });
                 return;
               }
@@ -461,6 +551,7 @@ export async function apply(ctx, config) {
               sessionId: created.sessionId,
               agentPreset: created.agentPreset || null,
               permission,
+              model,
             });
           } catch (err) {
             sendJson(res, 500, { ok: false, error: String((err && err.message) || err) });

@@ -13,7 +13,7 @@ No separate headless process, no webhook glue: one plugin, four endpoints.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/x/headless` | `{"task": "...", "cwd": "...", "preset": "coding", "mode": "queue"}` → `{"ok": true, "sessionId": "session-..."}` |
+| `POST` | `/x/headless` | `{"task": "...", "cwd": "...", "preset": "coding", "mode": "queue", "permission": "danger-full-access", "provider": "...", "model": "...", "reasoningEffort": "high"}` → `{"ok": true, "sessionId": "session-...", "model": {"provider": "...", "model": "...", "reasoningEffort": "high"}}`; the three model fields are optional — omit them to leave the model unspecified |
 | `GET` | `/x/headless/status?sessionId=...` | Latest session events (non-streaming poll) |
 | `GET` | `/x/headless/events?sessionId=...` | SSE live event stream; ends after `turn/end` |
 | `GET` | `/x/headless/health` | Plugin state and credential mode |
@@ -87,26 +87,172 @@ The bundle patch rule (`cordis.patch.yml`) is applied automatically by
 `dsh plugin add`, so no manual edit to the host profile is needed.
 Restart `dsh web` to load the plugin.
 
-## Example (CLI)
+## Real usage (end to end)
+
+Pick the shape that matches whether you need to watch progress. Examples use `BASE=http://127.0.0.1:3080`.
+
+### A. Interactive: watch it run
 
 ```bash
-# submit a task
-curl -s -X POST http://127.0.0.1:3080/x/headless \
+BASE=http://127.0.0.1:3080
+
+# 1) submit, capture the session id
+SID=$(curl -s -X POST $BASE/x/headless \
   -H 'content-type: application/json' \
-  -d '{"task":"Summarize the README","cwd":"/home/me/project","preset":"coding"}'
+  -d '{"task":"summarize the README and suggest improvements","cwd":"/path/to/repo","preset":"coding"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["sessionId"])')
 
-# tail it live
-curl -sN "http://127.0.0.1:3080/x/headless/events?sessionId=session-xxx"
+# 2) follow it live (SSE; ends after turn/end)
+curl -sN "$BASE/x/headless/events?sessionId=$SID"
 
-# check the plugin is loaded and how it authenticated
-curl -s http://127.0.0.1:3080/x/headless/health
+# 3) or poll the latest events
+curl -s "$BASE/x/headless/status?sessionId=$SID"
 ```
 
-The `preset` in the example is your profile's own (use whatever preset name your
-profile configures); omit it to take the profile's default preset.
+You can also follow nothing at all: once the task is submitted, **open the Web UI** —
+the session shows up in the sidebar under its workspace, with the same live stream and
+thinking timer as a task you typed by hand.
+`preset` is a preset name configured in *your* profile (omit to use the profile default);
+`cwd` is the task's working directory (and its sandbox write boundary).
 
-While it runs, open the Web UI: the session is visible in real time, exactly
-as if you had typed the task there.
+### Choosing the model (optional)
+
+A submission may carry `provider` / `model` / `reasoningEffort`, and the task then runs on that model:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `provider` | string | provider id |
+| `model` | string | model id |
+| `reasoningEffort` | string | optional, e.g. `off` / `low` / `medium` / `high` / `max`; when omitted the harness resolves the model's own default effort |
+
+Validation is type-only (non-empty strings) and no model allow-list is kept: an unknown name is
+rejected by the harness and its message is handed back unchanged. When **any** of the three fields is
+present, `provider` and `model` must both be given (a lone `reasoningEffort` answers `400`).
+
+```bash
+# run this task on a specific model
+curl -s -X POST http://127.0.0.1:3080/x/headless \
+  -H 'content-type: application/json' \
+  -d '{"task":"summarize the README and suggest improvements","cwd":"/path/to/repo","permission":"danger-full-access",
+       "provider":"your-provider","model":"your/model-id","reasoningEffort":"high"}'
+# -> {"ok":true,"sessionId":"session-...","agentPreset":null,"permission":"danger-full-access",
+#     "model":{"provider":"your-provider","model":"your/model-id","reasoningEffort":"high"}}
+```
+
+The response's `model` is the selection that actually took effect (taken from the harness return
+value, falling back to the requested values when that value is not shaped as expected); it is
+**`null` when nothing was specified**. A failed model selection answers `500` with an `error`
+body carrying the harness message, plus `sessionId` and `cleanup`; the session exists but **no task
+was sent**, and this harness exposes no session delete/remove RPC, so the session stays in the Web UI
+until it is removed by hand.
+
+> **Side effect (pre-existing harness behaviour)**: specifying a model also **updates the default
+> model selection** — the harness's `session.selectModel` persists the choice as the global default,
+> so later submissions that carry no model fields will use the model you picked here.
+> **Sending none of the three fields calls nothing and has no side effect**: existing callers behave
+> exactly as before, apart from the new `model: null` in the response.
+
+### B. Unattended: scripts / CI
+
+**The key point**: pass `permission` at submit time (or set `defaultPermission` in the
+plugin config — see below). Otherwise any step that needs approval will stall waiting for
+a human, instead of being allowed.
+
+```bash
+#!/usr/bin/env bash
+# Unattended submit -> wait -> exit status. 0 = completed, 1 = failed/aborted.
+set -euo pipefail
+BASE=${DSH_WEB_SUBMIT_URL:-http://127.0.0.1:3080}
+TASK=${1:?usage: run-task.sh "task text" [cwd]}
+CWD=${2:-$PWD}
+
+BODY=$(python3 -c 'import json,sys; print(json.dumps({"task":sys.argv[1],"cwd":sys.argv[2],"permission":"danger-full-access"}))' "$TASK" "$CWD")
+SID=$(curl -s -X POST "$BASE/x/headless" -H 'content-type: application/json' -d "$BODY" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("sessionId","") if d.get("ok") else "")')
+[ -n "$SID" ] || { echo "submit rejected" >&2; exit 1; }
+echo "sessionId=$SID" >&2
+
+while :; do
+  REASON=$(curl -s "$BASE/x/headless/status?sessionId=$SID" | python3 -c '
+import json,sys
+ev=(json.load(sys.stdin).get("events") or [])
+for e in reversed(ev):
+    if e.get("type")=="turn/end":
+        print(((e.get("data") or {}).get("reason") or {}).get("kind","")); break
+')
+  case "$REASON" in
+    "") sleep 2 ;;
+    completed) echo "completed"; break ;;
+    *) echo "ended: $REASON" >&2; exit 1 ;;
+  esac
+done
+```
+
+### Reading the result
+
+The task's **final text** lives in the `assistant/message` events (take the last one):
+
+```bash
+curl -s "$BASE/x/headless/status?sessionId=$SID" | python3 -c '
+import json,sys
+ev=(json.load(sys.stdin).get("events") or [])
+texts=[]
+for e in ev:
+    if e.get("type")!="assistant/message": continue
+    m=(e.get("data") or {}).get("message") or {}
+    t="".join(p.get("text","") for p in (m.get("content") or []) if p.get("type")=="text")
+    if t.strip(): texts.append(t.strip())
+print(texts[-1] if texts else "")'
+```
+
+Decide success from the `turn/end` event's `reason.kind` (`completed` is normal;
+`aborted` / `failed` are not) — not from the HTTP 200 you got at submit time,
+which only means the task was accepted.
+
+### Troubleshooting checklist
+
+| Want to confirm | How |
+|---|---|
+| The task really went through the plugin? | The session should appear in the Web UI sidebar under its workspace; landing in "ungrouped" means it ran via the bare `dsh headless` CLI (separate process) |
+| Plugin loaded, credential mode | `GET /x/headless/health` -> `credential: session-cookie` (after the first successful call) |
+| Any approval prompt / stall | `approval` occurrences in the session event stream should be 0 (when `permission` is set) |
+| Anything running right now | `GET /x/headless/active` -> `{ok,count,active[]}` (check count=0 before restarting `dsh web`) |
+
+## Permissions and unattended runs (`permission`)
+
+`permission` names the permission preset a new session receives before `session/prompt`,
+so the task runs under it from its first step:
+
+| `permission` | Sandbox | Approval | Effect |
+|---|---|---|---|
+| omitted | profile default (`workspace-write` + `ask`) | prompts the Web UI | unattended runs stall; with no browser connected they fail closed as `unavailable` |
+| `workspace-write` | `workspace-write` | `ask` | same as omitted, explicit |
+| `danger-full-access` | `danger-full-access` | `never` | no approval request is ever sent: writes outside the workspace just succeed instead of asking for escalation |
+
+```bash
+# unattended: no approval request ever reaches the Web UI
+curl -s -X POST http://127.0.0.1:3080/x/headless \
+  -H 'content-type: application/json' \
+  -d '{"task":"run the test suite and report the result","cwd":"/path/to/repo","permission":"danger-full-access"}'
+```
+
+Verify (the first events of the new session):
+
+```bash
+zstdcat ~/.dsh/sessions/<workspace>/<sessionId>/session.v4.jsonl*.zstd |
+  grep -E '"type":"(permission/preset|sandbox/mode|approval/policy)"' | head -6
+# permission/preset {"preset":"danger-full-access"}
+# sandbox/mode      {"mode":"danger-full-access"}
+# approval/policy   {"policy":"never"}
+```
+
+The name must be a preset key from the profile's `@deepseek-ai/dsh-permission-presets` config.
+An unknown name makes the endpoint answer `500 cannot apply permission preset '<name>'`,
+and the task is never submitted.
+
+**Note**: `danger-full-access` also drops the file-sandbox boundary for that session and the
+subagents it delegates to. When you only need "no approval card" and want to keep the sandbox,
+move the task's output inside the session workspace instead of using this preset.
 
 ## Config
 
@@ -115,44 +261,11 @@ as if you had typed the task there.
 | `routePrefix` | `/x` | Route prefix for all endpoints |
 | `maxBodyBytes` | `1048576` | Max request body size |
 | `pollIntervalMs` | `1500` | Poll interval behind the SSE stream |
+| `defaultPermission` | `""` (off) | Permission preset applied to submitted sessions that carry no body override; the body's `permission` wins |
 
-## Fork changes (ccwssy/dsh-web-submit, 0.2.2)
+## Changelog
 
-- **Fixed the dead `/api` path.** The plugin used to POST to `/api/<method>` with
-  no credentials. Since dsh 0.2.1-alpha.4 that surface answers `401 unauthorized`
-  (reproduced against a live 3080 instance), so `POST /x/headless` always failed
-  with HTTP 500. The plugin now mints and replays the signed session cookie
-  in-process, with one automatic re-authentication per request.
-- **Adapted to the new RPC contract.** Current builds register the typert
-  endpoints (`session/create`), wrap arguments as `args.request`, and page
-  history through `session.page` (address plus an inclusive `throughSeq`, retried
-  with the cursor the Host reports). The plugin probes and caches both the
-  endpoint spelling and the envelope.
-- **Added `GET /x/headless/health`** so a caller can tell whether the plugin is
-  loaded and which credential mode is active.
-- **Added `GET /x/headless/active`**, listing sessions whose turn is still running,
-  so a restart can be deferred until nothing is in flight.
-- **Sessions join the workspace**: creation first resolves `workspace/create` for
-  the `cwd` and then creates the session under that `workspaceId`, so the Web UI
-  sidebar lists headless sessions.
-- **Clearer `/api` failures**: a non-JSON response (for example the 401 body) is
-  reported as `HTTP <status>: <body>` instead of a JSON parse error.
-- **Declared dependencies** (`@deepseek-ai/schemastery`, peer `@deepseek-ai/dsh`,
-  Node `>=20`) instead of relying on host hoisting.
-- Documentation: real install paths for Linux/macOS and Windows, config table
-  completed, stale `ApiProxyService` claim removed, Chinese is now the default
-  README language (this file is the English one).
-- **Bilingual plugin description**: `package.json` `description` now carries the
-  Chinese and English text in one line, visible in the GUI component panel and in
-  plugin marketplaces.
-
-Verified end to end on dsh 0.2.1-alpha.4: `POST /x/headless` creates the session and
-queues the task, `/status` reads the full event list back, `/events` streams SSE.
-The contract actually used is `session/create` (`request.cwd`,
-`request.agentPreset`), `session/prompt` (`request: { requestId, sessionId,
-mode: queue|steer, content }`), `session/page` (`request: { address,
-throughSeq, maxMessages }`), with the
-`{type: "server-response", rpcId, result: {ok, value}}` envelope.
+See **[CHANGELOG.en.md](CHANGELOG.en.md)** for per-version changes.
 
 ## License
 
