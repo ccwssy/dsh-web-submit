@@ -15,6 +15,7 @@
 | `GET` | `/x/headless/status?sessionId=...` | 会话最新事件(非流式轮询) |
 | `GET` | `/x/headless/events?sessionId=...` | SSE 实时事件流,`turn/end` 后结束 |
 | `GET` | `/x/headless/health` | 插件状态与凭证模式 |
+| `GET` | `/x/headless/active` | 仍在本轮运行的会话(`{ok,count,active[]}`),重启前可用它确认没有任务在跑 |
 
 仅接受回环请求:`Host` 头不是回环地址(`127.0.0.1` / `localhost`)时一律返回 403。
 这里只做回环校验、不额外鉴权(面向本机 CLI);插件内部调用 `/api` 所需的签名 Cookie 由插件自己换取,见下节。
@@ -103,6 +104,8 @@ curl -s http://127.0.0.1:3080/x/headless/health
   现在插件在进程内铸取并复用签名 Cookie,并在每次请求上自动重认证一次。
 - **适配新的 RPC 契约**:新版端点为 `session/create` 形式、参数包在 `args.request` 里,历史读取走 `session.page`(需要 `address` + `throughSeq`,超出游标时按 Host 回报的游标重试)。插件自动探测端点拼写与信封并缓存。
 - **新增 `GET /x/headless/health`**:可判断插件是否加载、凭证处于什么模式。
+- **新增 `GET /x/headless/active`**:列出仍在本轮运行的会话,便于重启前确认没有任务被打断。
+- **会话会自动登记进 workspace**:创建前先 `workspace/create` 取 `cwd` 对应的 `workspaceId`,再以该 id 建会话,因此 Web UI 侧栏能直接看到。
 - **更清晰的 `/api` 错误**:非 JSON 响应(例如 401 正文)会报成 `HTTP <状态码>: <正文>`,不再是 JSON 解析错误。
 - **声明依赖**(`@deepseek-ai/schemastery`、peer `@deepseek-ai/dsh`、Node `>=20`),不再依赖宿主提升。
 - **文档**:补全 Linux/macOS 与 Windows 的真实安装路径、配置表,删除过时的 `ApiProxyService` 说法;

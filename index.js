@@ -93,6 +93,7 @@ export async function apply(ctx, config) {
   const STATUS = prefix + "/headless/status";
   const EVENTS = prefix + "/headless/events";
   const HEALTH = prefix + "/headless/health";
+  const ACTIVE = prefix + "/headless/active";
 
   /** Signed browser/API credential for this process's /api surface, once minted. */
   let credential;
@@ -318,6 +319,25 @@ export async function apply(ctx, config) {
             port: ctx.webServer.port ?? null,
             credential: credential === void 0 ? "pending" : "session-cookie",
           });
+          return;
+        }
+
+        // GET /x/headless/active : top-level sessions whose turn is still running.
+        if (req.method === "GET" && path === ACTIVE) {
+          try {
+            const list = await rpc("session.list", {});
+            const active = ((list && list.items) || [])
+              .filter((item) => item.running === true && item.parentSessionId === void 0)
+              .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+              .map((item) => ({
+                sessionId: item.sessionId,
+                cwd: item.cwd ?? null,
+                updatedAt: item.updatedAt ?? null,
+              }));
+            sendJson(res, 200, { ok: true, count: active.length, active });
+          } catch (err) {
+            sendJson(res, 500, { ok: false, error: String((err && err.message) || err) });
+          }
           return;
         }
 

@@ -17,6 +17,7 @@ No separate headless process, no webhook glue: one plugin, four endpoints.
 | `GET` | `/x/headless/status?sessionId=...` | Latest session events (non-streaming poll) |
 | `GET` | `/x/headless/events?sessionId=...` | SSE live event stream; ends after `turn/end` |
 | `GET` | `/x/headless/health` | Plugin state and credential mode |
+| `GET` | `/x/headless/active` | Sessions whose turn is still running (`{ok,count,active[]}`); check it before a restart |
 
 Loopback requests only: every endpoint is refused unless the `Host` header is a
 loopback authority (`127.0.0.1` / `localhost`). That is a loopback check, not an
@@ -128,6 +129,11 @@ as if you had typed the task there.
   endpoint spelling and the envelope.
 - **Added `GET /x/headless/health`** so a caller can tell whether the plugin is
   loaded and which credential mode is active.
+- **Added `GET /x/headless/active`**, listing sessions whose turn is still running,
+  so a restart can be deferred until nothing is in flight.
+- **Sessions join the workspace**: creation first resolves `workspace/create` for
+  the `cwd` and then creates the session under that `workspaceId`, so the Web UI
+  sidebar lists headless sessions.
 - **Clearer `/api` failures**: a non-JSON response (for example the 401 body) is
   reported as `HTTP <status>: <body>` instead of a JSON parse error.
 - **Declared dependencies** (`@deepseek-ai/schemastery`, peer `@deepseek-ai/dsh`,
