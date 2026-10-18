@@ -272,12 +272,17 @@ export async function apply(ctx, config) {
     }
   }
 
-  /** Best-effort registration so the session appears in that workspace's list. */
+  /**
+   * Place an already-accounted session in the workspace order. The harness only
+   * reorders existing members, so a session that was never accounted returns
+   * false and the caller reports it instead of pretending success.
+   */
   async function attachSession(sessionId, workspaceId) {
     try {
       await rpc("workspace.insertSessionBefore", { workspaceId, sessionId });
+      return true;
     } catch {
-      // Already listed, or a harness without the RPC: nothing else to do.
+      return false;
     }
   }
 
@@ -375,7 +380,17 @@ export async function apply(ctx, config) {
               sendJson(res, 500, { ok: false, error: "cannot resolve a workspace for " + cwd });
               return;
             }
-            await attachSession(sessionId, workspaceId);
+            const attached = await attachSession(sessionId, workspaceId);
+            if (!attached) {
+              sendJson(res, 409, {
+                ok: false,
+                sessionId,
+                workspaceId,
+                cwd,
+                error: "session is not accounted in that workspace; the workspace API only reorders existing members",
+              });
+              return;
+            }
             sendJson(res, 200, { ok: true, sessionId, workspaceId, cwd });
           } catch (err) {
             sendJson(res, 500, { ok: false, error: String((err && err.message) || err) });
