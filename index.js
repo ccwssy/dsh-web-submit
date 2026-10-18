@@ -286,6 +286,31 @@ export async function apply(ctx, config) {
     }
   }
 
+  /** The live Session instance for an id, through the in-process sessions service. */
+  function liveSession(sessionId) {
+    const sessions = ctx.get("sessions") ?? ctx.root?.get?.("sessions");
+    return sessions !== void 0 && typeof sessions.get === "function"
+      ? sessions.get(sessionId)
+      : void 0;
+  }
+
+  /**
+   * Apply one permission preset to a single live session. `danger-full-access`
+   * carries approval=never, so unattended automation can run without sending
+   * approval prompts to the Web UI.
+   */
+  function setSessionPermission(sessionId, preset) {
+    const presets = ctx.get("permissionPresets") ?? ctx.root?.get?.("permissionPresets");
+    const session = liveSession(sessionId);
+    if (presets === void 0 || typeof presets.set !== "function" || session === void 0) return false;
+    try {
+      presets.set(session, preset);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Read a session event page. Current harnesses page a durable address
    * ("session.page"); older ones returned "session.history" directly.
@@ -413,6 +438,17 @@ export async function apply(ctx, config) {
             if (body.preset) createReq.agentPreset = body.preset;
             const created = await rpc("session.create", createReq);
             if (workspaceId !== void 0) await attachSession(created.sessionId, workspaceId);
+            let permission = null;
+            if (typeof body.permission === "string" && body.permission.trim() !== "") {
+              permission = body.permission.trim();
+              if (!setSessionPermission(created.sessionId, permission)) {
+                sendJson(res, 500, {
+                  ok: false,
+                  error: "cannot apply permission preset '" + permission + "' to the new session",
+                });
+                return;
+              }
+            }
             await rpc("session.prompt", {
               requestId: randomUUID(),
               sessionId: created.sessionId,
@@ -424,6 +460,7 @@ export async function apply(ctx, config) {
               ok: true,
               sessionId: created.sessionId,
               agentPreset: created.agentPreset || null,
+              permission,
             });
           } catch (err) {
             sendJson(res, 500, { ok: false, error: String((err && err.message) || err) });
