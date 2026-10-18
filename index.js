@@ -239,6 +239,35 @@ export async function apply(ctx, config) {
   const MAX_SEQ = 9007199254740991;
 
   /**
+   * The Web UI groups sessions per workspace, so a session created with a bare
+   * cwd never appears in its sidebar. Ask the workspace registry for the
+   * workspace owning this path (creating it when absent) and cache its id;
+   * harnesses without the workspace RPC return undefined and keep cwd creation.
+   */
+  const workspaceByPath = new Map();
+
+  async function ensureWorkspace(path) {
+    if (workspaceByPath.has(path)) return workspaceByPath.get(path);
+    try {
+      const created = await rpc("workspace.create", { path });
+      const workspaceId = created && created.workspace ? created.workspace.workspaceId : void 0;
+      if (workspaceId !== void 0) workspaceByPath.set(path, workspaceId);
+      return workspaceId;
+    } catch {
+      return void 0;
+    }
+  }
+
+  /** Best-effort registration so the session appears in that workspace's list. */
+  async function attachSession(sessionId, workspaceId) {
+    try {
+      await rpc("workspace.insertSessionBefore", { workspaceId, sessionId });
+    } catch {
+      // Already listed, or a harness without the RPC: nothing else to do.
+    }
+  }
+
+  /**
    * Read a session event page. Current harnesses page a durable address
    * ("session.page"); older ones returned "session.history" directly.
    */
@@ -301,9 +330,12 @@ export async function apply(ctx, config) {
               sendJson(res, 400, { ok: false, error: "missing 'task'" });
               return;
             }
-            const createReq = { cwd: body.cwd || process.cwd() };
+            const cwd = body.cwd || process.cwd();
+            const workspaceId = await ensureWorkspace(cwd);
+            const createReq = workspaceId === void 0 ? { cwd } : { workspaceId };
             if (body.preset) createReq.agentPreset = body.preset;
             const created = await rpc("session.create", createReq);
+            if (workspaceId !== void 0) await attachSession(created.sessionId, workspaceId);
             await rpc("session.prompt", {
               requestId: randomUUID(),
               sessionId: created.sessionId,
