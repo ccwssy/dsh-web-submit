@@ -155,7 +155,6 @@ export async function apply(ctx, config) {
   }
 
   /**
-  /**
    * Endpoint spelling each logical method is served under on this harness.
    * Old builds register "session.create"; current builds register the typert
    * spelling "session/create". The first successful call wins and is reused.
@@ -165,11 +164,17 @@ export async function apply(ctx, config) {
   /** Payload envelope: current builds wrap method arguments in { args }. */
   let wrapArgs = true;
 
-  /** Parameter envelope: current typert methods take one named "request". */
-  let requestEnvelope = true;
+  /**
+   * Parameter name per method: the typert descriptor is stable per method but
+   * has changed between releases ("request" up to 0.2.1-alpha.4, "_request"
+   * from alpha.5), so it is negotiated once on the first descriptor error.
+   */
+  const wireParams = new Map();
 
   /** One RPC attempt against one exact endpoint spelling and envelope. */
-  async function rpcOnce(endpoint, payload) {
+  async function rpcOnce(method, endpoint, payload) {
+    const used = wireParams.has(method) ? wireParams.get(method) : "request";
+    const wrapped = used === null ? payload : { [used]: payload };
     const res = await apiFetch("/api/" + endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -177,11 +182,7 @@ export async function apply(ctx, config) {
         type: "client-request",
         rpcId: randomUUID(),
         method: endpoint,
-        payload: wrapArgs === true
-          ? { args: requestEnvelope === true ? { request: payload } : payload }
-          : requestEnvelope === true
-            ? { request: payload }
-            : payload,
+        payload: wrapArgs === true ? { args: wrapped } : wrapped,
       }),
     });
     const text = await res.text();
@@ -199,21 +200,22 @@ export async function apply(ctx, config) {
     if (!result || !result.ok) {
       const error = result && result.error;
       const message = error && error.message;
-      if (typeof message === "string" && message.includes("plain-object args field")) {
-        return { envelope: "args" };
-      }
-      if (typeof message === "string" && message.includes('missing "request"')) {
-        return { envelope: "request" };
+      if (typeof message === "string") {
+        // Envelope rejected: the harness wants the bare payload, not {args}.
+        if (message.includes("plain-object args field")) return { envelope: "bare" };
+        // Param name rejected: "missing \"request\"" / "missing \"_request\"".
+        const miss = message.match(/missing\s+"([\w$]+)"/);
+        if (miss !== null) return { param: miss[1] };
       }
       throw new Error(
         message ? message : JSON.stringify(error || body || "rpc failed"),
       );
     }
-    return { value: result.value };
+    return { value: result.value, used };
   }
 
   /** In-process RPC against the harness's own /api surface. */
-  async function rpc(method, payload, retried = false) {
+  async function rpc(method, payload) {
     const known = wireEndpoints.get(method);
     const candidates =
       known !== void 0
@@ -222,18 +224,28 @@ export async function apply(ctx, config) {
           ? [method, method.replaceAll(".", "/")]
           : [method];
     for (const endpoint of candidates) {
-      const outcome = await rpcOnce(endpoint, payload);
-      if (outcome.missing === true) continue;
-      if (outcome.envelope !== void 0) {
-        if (retried) throw new Error("unsupported RPC payload envelope");
-        if (outcome.envelope === "args") wrapArgs = !wrapArgs;
-        else requestEnvelope = !requestEnvelope;
-        return rpc(method, payload, true);
+      // A descriptor complaint is corrected in place and retried immediately;
+      // the per-endpoint cap (envelope flip + param fix + one spare) guarantees
+      // the loop terminates even if the harness keeps rejecting.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const outcome = await rpcOnce(method, endpoint, payload);
+        if (outcome.missing === true) break;
+        if (outcome.envelope !== void 0) {
+          wrapArgs = !wrapArgs;
+          continue;
+        }
+        if (outcome.param !== void 0) {
+          wireParams.set(method, outcome.param);
+          continue;
+        }
+        wireEndpoints.set(method, endpoint);
+        if (!wireParams.has(method)) wireParams.set(method, outcome.used);
+        return outcome.value;
       }
-      wireEndpoints.set(method, endpoint);
-      return outcome.value;
     }
-    throw new Error("/api/" + candidates.join(" and ") + " returned HTTP 404: not found");
+    throw new Error(
+      "/api/" + candidates.join(" and ") + ": not found or unsupported payload envelope",
+    );
   }
 
   /** Inclusive log cut: a value at or beyond the newest sequence returns the tail. */

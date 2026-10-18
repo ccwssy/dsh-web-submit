@@ -97,7 +97,7 @@ curl -s http://127.0.0.1:3080/x/headless/health
 | `maxBodyBytes` | `1048576` | 请求体上限 |
 | `pollIntervalMs` | `1500` | SSE 背后的轮询间隔 |
 
-## 本 fork 的改动(ccwssy/dsh-web-submit,0.2.1)
+## 本 fork 的改动(ccwssy/dsh-web-submit,0.2.2)
 
 - **修复失效的 `/api` 通路**:原版不带任何凭证 POST `/api/<method>`;自 dsh 0.2.1-alpha.4 起该通路返回
   `401 unauthorized`(已在真实 3080 实例上复现),于是 `POST /x/headless` 永远返回 500。

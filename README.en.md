@@ -115,7 +115,7 @@ as if you had typed the task there.
 | `maxBodyBytes` | `1048576` | Max request body size |
 | `pollIntervalMs` | `1500` | Poll interval behind the SSE stream |
 
-## Fork changes (ccwssy/dsh-web-submit, 0.2.1)
+## Fork changes (ccwssy/dsh-web-submit, 0.2.2)
 
 - **Fixed the dead `/api` path.** The plugin used to POST to `/api/<method>` with
   no credentials. Since dsh 0.2.1-alpha.4 that surface answers `401 unauthorized`
