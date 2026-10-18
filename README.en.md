@@ -18,6 +18,7 @@ No separate headless process, no webhook glue: one plugin, four endpoints.
 | `GET` | `/x/headless/events?sessionId=...` | SSE live event stream; ends after `turn/end` |
 | `GET` | `/x/headless/health` | Plugin state and credential mode |
 | `GET` | `/x/headless/active` | Sessions whose turn is still running (`{ok,count,active[]}`); check it before a restart |
+| `POST` | `/x/headless/adopt` | `{"sessionId":"session-..."}`: re-register an existing session in the workspace matching its `cwd` |
 
 Loopback requests only: every endpoint is refused unless the `Host` header is a
 loopback authority (`127.0.0.1` / `localhost`). That is a loopback check, not an

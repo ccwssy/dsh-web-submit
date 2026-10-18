@@ -94,6 +94,7 @@ export async function apply(ctx, config) {
   const EVENTS = prefix + "/headless/events";
   const HEALTH = prefix + "/headless/health";
   const ACTIVE = prefix + "/headless/active";
+  const ADOPT = prefix + "/headless/adopt";
 
   /** Signed browser/API credential for this process's /api surface, once minted. */
   let credential;
@@ -347,6 +348,35 @@ export async function apply(ctx, config) {
                 updatedAt: item.updatedAt ?? null,
               }));
             sendJson(res, 200, { ok: true, count: active.length, active });
+          } catch (err) {
+            sendJson(res, 500, { ok: false, error: String((err && err.message) || err) });
+          }
+          return;
+        }
+
+        // POST /x/headless/adopt : register an existing session in its workspace.
+        if (req.method === "POST" && path === ADOPT) {
+          try {
+            const body = await readBody(req, config.maxBodyBytes);
+            const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+            if (!sessionId) {
+              sendJson(res, 400, { ok: false, error: "missing 'sessionId'" });
+              return;
+            }
+            const list = await rpc("session.list", {});
+            const summary = ((list && list.items) || []).find((item) => item.sessionId === sessionId);
+            const cwd = summary && summary.cwd;
+            if (typeof cwd !== "string" || cwd === "") {
+              sendJson(res, 404, { ok: false, error: "session not found or has no cwd" });
+              return;
+            }
+            const workspaceId = await ensureWorkspace(cwd);
+            if (workspaceId === void 0) {
+              sendJson(res, 500, { ok: false, error: "cannot resolve a workspace for " + cwd });
+              return;
+            }
+            await attachSession(sessionId, workspaceId);
+            sendJson(res, 200, { ok: true, sessionId, workspaceId, cwd });
           } catch (err) {
             sendJson(res, 500, { ok: false, error: String((err && err.message) || err) });
           }

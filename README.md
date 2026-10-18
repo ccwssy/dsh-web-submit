@@ -16,6 +16,7 @@
 | `GET` | `/x/headless/events?sessionId=...` | SSE 实时事件流,`turn/end` 后结束 |
 | `GET` | `/x/headless/health` | 插件状态与凭证模式 |
 | `GET` | `/x/headless/active` | 仍在本轮运行的会话(`{ok,count,active[]}`),重启前可用它确认没有任务在跑 |
+| `POST` | `/x/headless/adopt` | `{"sessionId":"session-..."}`:把已存在但没进侧栏的会话按 `cwd` 补登记到对应 workspace |
 
 仅接受回环请求:`Host` 头不是回环地址(`127.0.0.1` / `localhost`)时一律返回 403。
 这里只做回环校验、不额外鉴权(面向本机 CLI);插件内部调用 `/api` 所需的签名 Cookie 由插件自己换取,见下节。
