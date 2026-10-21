@@ -3,6 +3,20 @@
 This repository is a fork of `deepseek-ai/dsh-web-submit` (maintained by the maintainer).
 Version numbers follow the plugin's own `package.json`. Usage and install: [README.en.md](README.en.md).
 
+## v0.2.6
+
+- **dsh version is now constrained**: `dsh.engines.dsh` (and `peerDependencies`) tightened from
+  `>=0.2.0-rc.2` to `>=0.2.1-alpha.4 <0.3.0`, matching what was actually tested. dsh's plugin
+  loader evaluates that range at install/startup and refuses an incompatible host (pointing at
+  `dsh plugin allow-version` for an exact-version exemption).
+- **Runtime self-check**: `apply()` derives the host version (`DSH_VERSION` → the real path of
+  `process.argv[1]` walked up to `@deepseek-ai/dsh/package.json` → one import-resolution attempt).
+  Outside the range, `POST /x/headless` answers `409` with `dshVersion`/`supportedDsh`. New config
+  `allowUnsupportedDsh` (default `false`) overrides; an undetectable version is reported, not blocked.
+- **New `health` fields**: `dshVersion`, `supportedDsh`, `compatible` (`null` = unknown).
+- **Verified**: 8 version-comparison edge cases (alpha.3 / alpha.4 / rc.2 / 0.2.0 / 0.2.9 /
+  0.3.0 / garbage) behave as intended; on dsh 0.2.1-rc.2 `detectDshVersion()` returns the real version.
+
 ## v0.2.5
 
 - **`examples/headless-shim.sh` is now in the repository**: the reference shim that turns

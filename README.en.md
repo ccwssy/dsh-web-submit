@@ -20,6 +20,8 @@ No separate headless process, no webhook glue: one plugin, six endpoints.
 3. **Unattended runs must pass `permission`** (or set `defaultPermission` in the plugin config);
    otherwise an approval step stalls waiting for a human. Decide success from `turn/end` →
    `reason.kind`, not from the HTTP 200 at submit time.
+4. **Only dsh `>=0.2.1-alpha.4 <0.3.0` is supported**: dsh refuses to install the plugin outside
+   that range, and submissions answer `409` at runtime (`health.compatible` tells you directly).
 
 The sections below cover endpoints → install → usage in that order.
 
@@ -30,7 +32,7 @@ The sections below cover endpoints → install → usage in that order.
 | `POST` | `/x/headless` | `{"task": "...", "cwd": "...", "preset": "coding", "mode": "queue", "permission": "danger-full-access", "provider": "...", "model": "...", "reasoningEffort": "high"}` → `{"ok": true, "sessionId": "session-...", "model": {"provider": "...", "model": "...", "reasoningEffort": "high"}}`; the three model fields are optional — omit them to leave the model unspecified |
 | `GET` | `/x/headless/status?sessionId=...` | Latest session events (non-streaming poll) |
 | `GET` | `/x/headless/events?sessionId=...` | SSE live event stream; ends after `turn/end` |
-| `GET` | `/x/headless/health` | Plugin state and credential mode |
+| `GET` | `/x/headless/health` | Plugin state, credential mode and host version (`dshVersion` / `supportedDsh` / `compatible`) |
 | `GET` | `/x/headless/active` | Sessions whose turn is still running (`{ok,count,active[]}`); check it before a restart |
 | `POST` | `/x/headless/adopt` | `{"sessionId":"session-..."}`: re-register an existing session in the workspace matching its `cwd` |
 
@@ -63,16 +65,32 @@ history through `session.page` (which needs an `address` and an inclusive log
 cut `throughSeq`). The plugin probes and remembers both the spelling and the
 envelope this harness uses, so either generation works.
 
-## dsh compatibility
+## Supported dsh versions
+
+**Supported range: `>=0.2.1-alpha.4 <0.3.0`** (tested on `0.2.1-alpha.4` and `0.2.1-rc.2`).
+Outside it, two gates refuse the work:
+
+1. **Install/startup, enforced by dsh itself**: `package.json`'s `dsh.engines.dsh` is evaluated by
+   the dsh plugin loader, which refuses an incompatible install/startup and points at
+   `dsh plugin allow-version` for an exact-version exemption. `peerDependencies` declares the
+   same range.
+2. **Runtime, enforced by the plugin**: `apply()` derives the host version (`DSH_VERSION` first,
+   then the real path of `process.argv[1]` walked up to `@deepseek-ai/dsh/package.json`, then one
+   import-resolution attempt). Outside the range, `POST /x/headless` answers `409` with
+   `dshVersion` and `supportedDsh`, unless the plugin config sets `allowUnsupportedDsh: true`.
+   **An undetectable version counts as unknown: reported, never blocked.**
 
 | dsh version | `/api` authentication | Endpoints and arguments | Status |
 |---|---|---|---|
-| `0.2.1-alpha.4` / `0.2.1-rc.2` (tested here) | Signed cookie required; the plugin mints it in-process from the launch token | typert endpoints `session/create`, `session/prompt`; arguments wrapped as `args.request`; history via `session.page` (`address` + `throughSeq`) | Verified end to end |
-| earlier `0.2.x` | `/api` is open on loopback; the exchange is skipped | dotted endpoints `session.create`, `session.prompt`; arguments at the payload top level; history via `session.history` | Compatibility branch kept, not regression-tested per release |
+| `0.2.1-alpha.4` / `0.2.1-rc.2` | Signed cookie required; the plugin mints it in-process from the launch token | typert endpoints `session/create`, `session/prompt`; arguments wrapped as `args.request`; history via `session.page` (`address` + `throughSeq`) | Verified end to end |
+| `< 0.2.1-alpha.4` | `/api` is open on loopback; the exchange is skipped | dotted endpoints `session.create`, `session.prompt`; arguments at the payload top level; history via `session.history` | **Not supported**: the probe branch remains in code, but the manifest makes dsh refuse the install |
+| `>= 0.3.0` | not verified | not verified | **Not supported**: widen after testing |
 
-`package.json` declares `dsh.engines.dsh >= 0.2.0-rc.2` and Node `>=20`. The only npm
-dependency the plugin itself needs is `@deepseek-ai/schemastery`; `@deepseek-ai/dsh`
-is a host-provided peer marked `optional`, so pnpm does not drag the whole dsh
+`GET /x/headless/health` reports `dshVersion`, `supportedDsh` and `compatible`
+(`compatible: null` means the version is unknown).
+
+Node `>=20`. The only npm dependency the plugin itself needs is `@deepseek-ai/schemastery`;
+`@deepseek-ai/dsh` is a host-provided peer marked `optional`, so pnpm does not drag the whole dsh
 dependency tree in during install.
 The plugin hard-codes neither generation: on the first call it probes outward
 (endpoint spelling, `args` envelope, `request` envelope) and caches whatever
@@ -362,6 +380,7 @@ move the task's output inside the session workspace instead of using this preset
 | `maxBodyBytes` | `1048576` | Max request body size |
 | `pollIntervalMs` | `1500` | Poll interval behind the SSE stream |
 | `defaultPermission` | `""` (off) | Permission preset applied to submitted sessions that carry no body override; the body's `permission` wins |
+| `allowUnsupportedDsh` | `false` | Submit anyway when the host dsh is outside the supported range (default: refuse with `409`) |
 
 ## Changelog
 

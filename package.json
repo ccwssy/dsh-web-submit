@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-submit",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "把 CLI 提交的任务跑进正在运行的 dsh web 进程(/x/headless 提交、status + health 查询、SSE 实时事件),Web UI 中实时可见 · DeepSeek Harness plugin: run headless-style tasks through the live dsh web process (POST /x/headless, status + health, SSE live events) — CLI-invoked sessions appear in the Web UI in real time.",
   "type": "module",
   "main": "index.js",
@@ -8,7 +8,7 @@
     "@deepseek-ai/schemastery": "^3.18.4"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": ">=0.2.0-rc.2"
+    "@deepseek-ai/dsh": ">=0.2.1-alpha.4 <0.3.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh": {
@@ -17,7 +17,7 @@
   },
   "dsh": {
     "engines": {
-      "dsh": ">=0.2.0-rc.2"
+      "dsh": ">=0.2.1-alpha.4 <0.3.0"
     },
     "bundle": {
       "patch": "./cordis.patch.yml"

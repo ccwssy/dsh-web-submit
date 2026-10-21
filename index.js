@@ -27,10 +27,21 @@
  */
 import z from "@deepseek-ai/schemastery";
 import { randomUUID } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export const name = "dsh-web-submit";
 
 export const inject = ["webServer"];
+
+/**
+ * Verified dsh range. dsh's own plugin loader evaluates the same constraint
+ * from this package's `dsh.engines.dsh` and refuses an incompatible install,
+ * so this constant is the single source for both the manifest range and the
+ * runtime check below (which catches a host that changed under an installed
+ * plugin).
+ */
+export const SUPPORTED_DSH_RANGE = ">=0.2.1-alpha.4 <0.3.0";
 
 export const Config = z.object({
   routePrefix: z.string().default("/x"),
@@ -38,7 +49,109 @@ export const Config = z.object({
   pollIntervalMs: z.number().default(1500),
   /** Permission preset applied to submitted sessions without a body override. */
   defaultPermission: z.string().default(""),
+  /** Submit anyway when the host dsh is outside SUPPORTED_DSH_RANGE. */
+  allowUnsupportedDsh: z.boolean().default(false),
 });
+
+/** Parse `1.2.3` / `v1.2.3-rc.4`; undefined when the text is not a version. */
+export function parseVersion(text) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(String(text ?? "").trim());
+  if (match === null) return void 0;
+  return {
+    nums: [Number(match[1]), Number(match[2]), Number(match[3])],
+    pre: match[4] === void 0 ? [] : match[4].split("."),
+  };
+}
+
+/** Semver ordering (numeric parts, then prerelease; a release outranks its prereleases). */
+export function compareVersions(a, b) {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  if (left === void 0 || right === void 0) return void 0;
+  for (let i = 0; i < 3; i += 1) {
+    if (left.nums[i] !== right.nums[i]) return left.nums[i] < right.nums[i] ? -1 : 1;
+  }
+  if (left.pre.length === 0 && right.pre.length === 0) return 0;
+  if (left.pre.length === 0) return 1;
+  if (right.pre.length === 0) return -1;
+  const length = Math.max(left.pre.length, right.pre.length);
+  for (let i = 0; i < length; i += 1) {
+    const p = left.pre[i];
+    const q = right.pre[i];
+    if (p === void 0) return -1;
+    if (q === void 0) return 1;
+    const pNumeric = /^\d+$/.test(p);
+    const qNumeric = /^\d+$/.test(q);
+    if (pNumeric && qNumeric) {
+      const delta = Number(p) - Number(q);
+      if (delta !== 0) return delta < 0 ? -1 : 1;
+      continue;
+    }
+    if (pNumeric) return -1;
+    if (qNumeric) return 1;
+    if (p !== q) return p < q ? -1 : 1;
+  }
+  return 0;
+}
+
+/** Whether a dsh version falls inside SUPPORTED_DSH_RANGE. */
+export function satisfiesDsh(version) {
+  const low = compareVersions(version, "0.2.1-alpha.4");
+  const high = compareVersions(version, "0.3.0");
+  return low !== void 0 && high !== void 0 && low >= 0 && high < 0;
+}
+
+function readManifest(file) {
+  try {
+    const manifest = JSON.parse(readFileSync(file, "utf8"));
+    return typeof manifest.version === "string" ? manifest : void 0;
+  } catch {
+    return void 0;
+  }
+}
+
+/**
+ * Best-effort host dsh version. `DSH_VERSION` wins (containers, Desktop);
+ * otherwise walk up from the launching entry point (the npm/pnpm `dsh` shim
+ * resolves into `<...>/@deepseek-ai/dsh/lib/bin.js`), then try package
+ * resolution. undefined means unknown — callers must not block on it.
+ */
+export function detectDshVersion() {
+  const fromEnv = process.env.DSH_VERSION;
+  if (typeof fromEnv === "string" && parseVersion(fromEnv) !== void 0) return fromEnv.trim();
+
+  const starts = [];
+  const entry = process.argv[1];
+  if (typeof entry === "string" && entry !== "") {
+    try {
+      starts.push(realpathSync(entry));
+    } catch {
+      starts.push(entry);
+    }
+  }
+  for (const start of starts) {
+    let dir = dirname(start);
+    for (let depth = 0; depth < 6; depth += 1) {
+      const manifest = readManifest(join(dir, "package.json"));
+      if (manifest !== void 0 && manifest.name === "@deepseek-ai/dsh") return manifest.version;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+
+  try {
+    const resolved = import.meta.resolve?.("@deepseek-ai/dsh/package.json");
+    if (typeof resolved === "string" && resolved.startsWith("file:")) {
+      const manifest = readManifest(decodeURIComponent(new URL(resolved).pathname));
+      if (manifest !== void 0 && manifest.name === "@deepseek-ai/dsh") return manifest.version;
+    }
+  } catch {
+    // not resolvable from a profile install — version stays unknown
+  }
+  return void 0;
+}
+
 
 function isLoopbackHost(host) {
   if (!host) return false;
@@ -109,6 +222,18 @@ export async function apply(ctx, config) {
   const HEALTH = prefix + "/headless/health";
   const ACTIVE = prefix + "/headless/active";
   const ADOPT = prefix + "/headless/adopt";
+
+  // Host version gate: dsh's loader already refuses an install outside
+  // `dsh.engines.dsh`; this catches a host swapped underneath a working
+  // install. Unknown versions are reported, never blocked.
+  const dshVersion = detectDshVersion();
+  const dshCompatible = dshVersion === void 0 ? void 0 : satisfiesDsh(dshVersion);
+  if (dshCompatible === false) {
+    console.warn(
+      "dsh-web-submit: host dsh " + dshVersion + " is outside the supported range " +
+        SUPPORTED_DSH_RANGE + "; submissions are refused unless allowUnsupportedDsh is enabled",
+    );
+  }
 
   /** Signed browser/API credential for this process's /api surface, once minted. */
   let credential;
@@ -375,6 +500,9 @@ export async function apply(ctx, config) {
             routePrefix: prefix,
             port: ctx.webServer.port ?? null,
             credential: credential === void 0 ? "pending" : "session-cookie",
+            dshVersion: dshVersion ?? null,
+            supportedDsh: SUPPORTED_DSH_RANGE,
+            compatible: dshCompatible ?? null,
           });
           return;
         }
@@ -439,6 +567,17 @@ export async function apply(ctx, config) {
 
         // POST /x/headless : create a session in the web process and prompt it.
         if (req.method === "POST" && path === HEADLESS) {
+          if (dshCompatible === false && config.allowUnsupportedDsh !== true) {
+            sendJson(res, 409, {
+              ok: false,
+              dshVersion,
+              supportedDsh: SUPPORTED_DSH_RANGE,
+              error:
+                "host dsh " + dshVersion + " is outside the supported range " + SUPPORTED_DSH_RANGE +
+                "; upgrade/downgrade dsh, install a matching plugin version, or set allowUnsupportedDsh=true to override",
+            });
+            return;
+          }
           try {
             const body = await readBody(req, config.maxBodyBytes);
             const task = typeof body.task === "string" ? body.task.trim() : "";

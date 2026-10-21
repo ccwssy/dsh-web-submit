@@ -3,6 +3,19 @@
 本仓库是 `deepseek-ai/dsh-web-submit` 的 fork（维护者维护）。版本号跟随插件自身 `package.json`。
 用法与安装见 [README.md](README.md)。
 
+## v0.2.6
+
+- **限定 dsh 版本**:`dsh.engines.dsh`(与 `peerDependencies`)由 `>=0.2.0-rc.2` 收紧为
+  `>=0.2.1-alpha.4 <0.3.0`,与实测范围一致 —— dsh 的 plugin loader 在安装/启动时评估该范围,
+  不满足直接拒绝(并提示用 `dsh plugin allow-version` 做精确版本豁免)。
+- **运行期自查**:`apply()` 推导宿主版本(`DSH_VERSION` → `process.argv[1]` 真实路径向上找
+  `@deepseek-ai/dsh/package.json` → 一次 import 解析);超出范围时 `POST /x/headless` 返回 `409`,
+  body 带 `dshVersion`/`supportedDsh`。新增配置 `allowUnsupportedDsh`(默认 `false`)可显式放行;
+  版本探测不到按「未知」处理,只上报、不拦截。
+- **`health` 新增字段**:`dshVersion`、`supportedDsh`、`compatible`(`null` = 版本未知)。
+- **实测**:版本比较 8 组边界(alpha.3 / alpha.4 / rc.2 / 0.2.0 / 0.2.9 / 0.3.0 / 非法串)全部符合预期;
+  dsh 0.2.1-rc.2 下 `detectDshVersion()` 返回真实版本。
+
 ## v0.2.5
 
 - **`examples/headless-shim.sh` 入库**:把 `dsh headless "任务"` 转成 `POST /x/headless` 的参考 shim

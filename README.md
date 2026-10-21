@@ -15,6 +15,8 @@
    —— 那个子命令由 dsh CLI 在插件加载之前就解析完了,插件无权介入。
 3. **无人值守必须带 `permission`**(或在插件配置里设 `defaultPermission`),否则遇到审批会挂起等人点;
    判成败看事件流里 `turn/end` 的 `reason.kind`,不是提交时的 HTTP 200。
+4. **只支持 dsh `>=0.2.1-alpha.4 <0.3.0`**:范围外 dsh 会拒绝安装,运行期提交返回 `409`
+   (`health` 里的 `compatible` 可直接判断)。
 
 以下三节按「端点 → 安装 → 用法」展开,细节都在里面。
 
@@ -25,7 +27,7 @@
 | `POST` | `/x/headless` | `{"task":"...","cwd":"...","preset":"coding","mode":"queue","permission":"danger-full-access","provider":"...","model":"...","reasoningEffort":"high"}` → `{"ok":true,"sessionId":"session-...","model":{"provider":"...","model":"...","reasoningEffort":"high"}}`;三个模型字段可选,不传即不指定模型 |
 | `GET` | `/x/headless/status?sessionId=...` | 会话最新事件(非流式轮询) |
 | `GET` | `/x/headless/events?sessionId=...` | SSE 实时事件流,`turn/end` 后结束 |
-| `GET` | `/x/headless/health` | 插件状态与凭证模式 |
+| `GET` | `/x/headless/health` | 插件状态、凭证模式、宿主版本(`dshVersion` / `supportedDsh` / `compatible`) |
 | `GET` | `/x/headless/active` | 仍在本轮运行的会话(`{ok,count,active[]}`),重启前可用它确认没有任务在跑 |
 | `POST` | `/x/headless/adopt` | `{"sessionId":"session-..."}`:把已存在但没进侧栏的会话按 `cwd` 补登记到对应 workspace |
 
@@ -48,14 +50,28 @@
 参数包在 `args.request` 里,历史读取改用 `session.page`(需要 `address` 与日志切点 `throughSeq`)。
 插件会逐层探测并记住该 harness 实际使用的拼写与信封,两代都能工作。
 
-## 适配的 dsh 版本
+## 支持的 dsh 版本
+
+**支持范围:`>=0.2.1-alpha.4 <0.3.0`**(实测 `0.2.1-alpha.4` 与 `0.2.1-rc.2`)。范围外两层拦截:
+
+1. **安装/启动期,由 dsh 自己把关**:`package.json` 的 `dsh.engines.dsh` 会被 dsh 的 plugin loader
+   评估,不满足时拒绝安装/启动,并提示用 `dsh plugin allow-version` 做「精确版本」豁免。
+   `peerDependencies` 同步声明同一范围。
+2. **运行期,插件自查**:`apply()` 推导宿主版本(`DSH_VERSION` 环境变量优先,其次从
+   `process.argv[1]` 的真实路径向上找 `@deepseek-ai/dsh/package.json`,最后试一次 import 解析);
+   超出范围时 `POST /x/headless` 直接返回 `409`(body 带 `dshVersion`、`supportedDsh`),
+   除非插件配置 `allowUnsupportedDsh: true`。**探测不到版本时按「未知」处理:只上报、不拦截。**
 
 | dsh 版本 | `/api` 鉴权 | 端点与参数 | 状态 |
 |---|---|---|---|
-| `0.2.1-alpha.4` / `0.2.1-rc.2`(本仓库实测) | 必须带签名 Cookie,插件用进程内启动令牌自动换取 | typert 端点 `session/create`、`session/prompt`;参数包在 `args.request`;历史读取走 `session.page`(`address` + `throughSeq`) | 已端到端实测通过 |
-| 更早的 `0.2.x` | `/api` 在回环上开放,插件跳过换取直接请求 | 点号端点 `session.create`、`session.prompt`;参数放 payload 顶层;历史走 `session.history` | 保留兼容分支,未逐版回归 |
+| `0.2.1-alpha.4` / `0.2.1-rc.2` | 必须带签名 Cookie,插件用进程内启动令牌自动换取 | typert 端点 `session/create`、`session/prompt`;参数包在 `args.request`;历史读取走 `session.page`(`address` + `throughSeq`) | 已端到端实测 |
+| `< 0.2.1-alpha.4` | `/api` 在回环上开放,插件跳过换取直接请求 | 点号端点 `session.create`、`session.prompt`;参数放 payload 顶层;历史走 `session.history` | **不在支持范围**:代码里保留探测分支,但 manifest 会让 dsh 拒绝安装 |
+| `>= 0.3.0` | 未验证 | 未验证 | **不在支持范围**:实测后再放宽 |
 
-`package.json` 声明 `dsh.engines.dsh >= 0.2.0-rc.2`、Node `>=20`。插件自身的 npm 依赖只有
+`GET /x/headless/health` 直接回 `dshVersion`、`supportedDsh`、`compatible`
+(`compatible: null` 表示版本未知)。
+
+Node `>=20`。插件自身的 npm 依赖只有
 `@deepseek-ai/schemastery`;`@deepseek-ai/dsh` 是宿主提供的 peer,已标记 `optional`,
 避免安装时被 pnpm 连带拉下整个 dsh 依赖树。
 插件不写死某一代契约:首次调用时按 404 与信封报错逐层探测(端点拼写 / `args` 包装 / `request` 包装),
@@ -324,6 +340,7 @@ zstdcat ~/.dsh/sessions/<workspace>/<sessionId>/session.v4.jsonl*.zstd |
 | `maxBodyBytes` | `1048576` | 请求体上限 |
 | `pollIntervalMs` | `1500` | SSE 背后的轮询间隔 |
 | `defaultPermission` | `""`(不套用) | 提交的会话默认套用的权限预设名;请求体带 `permission` 时以请求体为准 |
+| `allowUnsupportedDsh` | `false` | 宿主 dsh 超出支持范围时仍允许提交(默认拒绝,`409`) |
 
 ## 变更历史
 
