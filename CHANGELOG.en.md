@@ -3,6 +3,17 @@
 This repository is a fork of `deepseek-ai/dsh-web-submit` (maintained by the maintainer).
 Version numbers follow the plugin's own `package.json`. Usage and install: [README.en.md](README.en.md).
 
+## v0.2.7
+
+- **The shim now works with plugin versions that have no `/health`**: a `404` health probe is treated
+  as "older plugin, may still work" and submission is attempted; the fallback to the real CLI only
+  happens when the submission itself is rejected. (Without this, the shim could never engage an
+  older plugin, since it has no health endpoint.)
+- **Terser diagnostics**: a rejected submission is reported as one line of at most 300 characters,
+  instead of dumping a whole HTML error page onto stderr.
+- Verified: the 0.2.7 plugin path works; against a fake backend answering `404` on `/health` and
+  `501` on POST, the shim fell back to the `dsh headless` CLI and still produced the answer.
+
 ## v0.2.6
 
 - **dsh version is now constrained**: `dsh.engines.dsh` (and `peerDependencies`) tightened from

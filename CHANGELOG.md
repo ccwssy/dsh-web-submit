@@ -3,6 +3,13 @@
 本仓库是 `deepseek-ai/dsh-web-submit` 的 fork（维护者维护）。版本号跟随插件自身 `package.json`。
 用法与安装见 [README.md](README.md)。
 
+## v0.2.7
+
+- **shim 兼容没有 `/health` 的插件版本**:健康检查返回 `404` 时不再直接回退,而是视为「老版本插件,
+  可能可用」继续提交;只有提交被拒才回退真实 CLI(旧版插件没有 health 端点,原逻辑会让 shim 永不生效)。
+- **诊断输出收敛**:提交失败时把后端响应截成一行 300 字符(stderr 不再被整页 HTML 淹没)。
+- 实测:0.2.7 插件路径正常;`/health` 返回 404 的假后端 → 提交 501 → 自动回退 `dsh headless` CLI 并产出答案。
+
 ## v0.2.6
 
 - **限定 dsh 版本**:`dsh.engines.dsh`(与 `peerDependencies`)由 `>=0.2.0-rc.2` 收紧为

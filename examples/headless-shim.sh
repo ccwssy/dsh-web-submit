@@ -46,6 +46,9 @@ BASE="${DSH_WEB_SUBMIT_URL:-http://127.0.0.1:3080}"
 
 fail() { echo "dsh: headless shim: $*" >&2; exit 1; }
 
+# 诊断信息只留一行一小段:后端可能回整页 HTML
+brief() { printf '%s' "$1" | tr '\n\r' '  ' | cut -c1-300; }
+
 # ---- 找到真实 dsh(必须排除自己,否则 exec 自身会无限递归)----
 self_path="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/$(basename "$0")"
 same_as_self() {
@@ -133,10 +136,16 @@ fi
 if [ -n "$provider" ] && [ -z "$model" ]; then fail "--provider requires --model"; fi
 if [ -n "$model" ] && [ -z "$provider" ]; then fail "--model requires --provider"; fi
 
-plugin_ok() {
+# 插件可用性:200 = 可用;404 = 老版本插件(没有 /health)仍然可能可用,
+# 交给提交结果判定;其它(含连接失败)= 不可用,直接回退。
+plugin_state() {
   local code
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$BASE/x/headless/health" 2>/dev/null || echo 000)"
-  [ "$code" = "200" ]
+  case "$code" in
+    200) echo ok ;;
+    404) echo unknown ;;
+    *) echo down ;;
+  esac
 }
 
 fallback() {
@@ -145,7 +154,8 @@ fallback() {
   exec "$REAL_DSH" "${orig[@]}"
 }
 
-plugin_ok || fallback "health check failed"
+state="$(plugin_state)"
+[ "$state" = "down" ] && fallback "health check failed"
 
 # ---- 提交 ----
 payload="$(TASK="$task" CWD="$cwd" PRESET="$preset" PERMISSION="$permission" \
@@ -172,7 +182,11 @@ try: d=json.load(sys.stdin)
 except Exception: print(""); raise SystemExit
 print(d.get("sessionId","") if d.get("ok") else "")
 ' 2>/dev/null)"
-[ -n "$sid" ] || fail "submit rejected: $resp"
+[ -n "$sid" ] || {
+  # 旧版插件(无 health)无法预先判断,提交被拒就说明它不可用 → 回退 CLI
+  [ "$state" = "unknown" ] && fallback "submit rejected: $(brief "$resp")"
+  fail "submit rejected: $(brief "$resp")"
+}
 echo "dsh: headless shim: sessionId=$sid (visible in the dsh Web UI)" >&2
 
 # ---- 等待 turn/end,把最终 assistant 文本打到 stdout(保持 CLI 的输出契约)----
