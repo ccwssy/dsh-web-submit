@@ -51,7 +51,9 @@ then fixed**:
 | `gateway` (preferred) | `typertGateway` exists and `connection.browserPeer` is available (dsh >= 0.2.1-rc.2) | `gateway.invoke({ peer, namespace, method, args: { request } })` — in-process, no HTTP hop and no cookie; the owner Peer comes from the connection service because `invoke()` asserts `peer.signal` |
 | `api` (fallback) | either of the above is missing (older harness) | `/api` on this process with a signed cookie; a 401 drops and re-mints it once |
 
-`GET /x/headless/health` reports the active channel in `transport`.
+`GET /x/headless/health` reports the active channel in `transport`, the configured value in
+`transportPreference`, and whether the in-process gateway plus owner Peer is currently usable in
+`gatewayReady` (useful when `gateway` is forced on an environment that cannot provide it).
 
 **Why it never switches on failure**: replaying `session/create` or `session/prompt` over the other
 channel would submit the same task twice, so the choice is made once and a failing call is reported.
@@ -394,7 +396,8 @@ move the task's output inside the session workspace instead of using this preset
 | `maxBodyBytes` | `1048576` | Max request body size |
 | `pollIntervalMs` | `1500` | Poll interval behind the SSE stream |
 | `defaultPermission` | `""` (off) | Permission preset applied to submitted sessions that carry no body override; the body's `permission` wins |
-| `allowUnsupportedDsh` | `false` | Submit anyway when the host dsh is outside the supported range (default: refuse with `409`) |
+| `allowUnsupportedDsh` | `false` | Submit anyway when the host dsh is outside the supported range (default: refuse with `409`); `DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED=1` is equivalent |
+| `transport` | `"auto"` | `auto` (probe, gateway first) / `gateway` / `api`; the `DSH_WEB_SUBMIT_TRANSPORT` environment variable wins over the config |
 
 ## Changelog
 

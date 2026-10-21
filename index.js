@@ -51,6 +51,8 @@ export const Config = z.object({
   defaultPermission: z.string().default(""),
   /** Submit anyway when the host dsh is outside SUPPORTED_DSH_RANGE. */
   allowUnsupportedDsh: z.boolean().default(false),
+  /** Transport: "auto" (probe), "gateway", or "api". */
+  transport: z.string().default("auto"),
 });
 
 /** Parse `1.2.3` / `v1.2.3-rc.4`; undefined when the text is not a version. */
@@ -368,14 +370,34 @@ export async function apply(ctx, config) {
   const connectionService = () => ctx.get("connection") ?? ctx.root?.get?.("connection");
   const gatewayService = () => ctx.get("typertGateway") ?? ctx.root?.get?.("typertGateway");
 
+  /** Ops escape hatch: accept an out-of-range host without editing the profile. */
+  const allowUnsupported =
+    config.allowUnsupportedDsh === true ||
+    ["1", "true", "yes", "on"].includes(
+      String(process.env.DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED || "").trim().toLowerCase(),
+    );
+
+  /** `DSH_WEB_SUBMIT_TRANSPORT` overrides the plugin config (ops escape hatch). */
+  const transportPreference = String(
+    process.env.DSH_WEB_SUBMIT_TRANSPORT || config.transport || "auto",
+  )
+    .trim()
+    .toLowerCase();
+
+  function gatewayReady() {
+    const gateway = gatewayService();
+    return (
+      gateway !== void 0 &&
+      typeof gateway.invoke === "function" &&
+      connectionService()?.browserPeer !== void 0
+    );
+  }
+
   function pickTransport() {
     if (transport !== void 0) return transport;
-    const gateway = gatewayService();
-    const connection = connectionService();
-    transport =
-      gateway !== void 0 && typeof gateway.invoke === "function" && connection?.browserPeer !== void 0
-        ? "gateway"
-        : "api";
+    if (transportPreference === "api") transport = "api";
+    else if (transportPreference === "gateway") transport = "gateway";
+    else transport = gatewayReady() ? "gateway" : "api";
     return transport;
   }
 
@@ -562,6 +584,8 @@ export async function apply(ctx, config) {
             routePrefix: prefix,
             port: ctx.webServer.port ?? null,
             transport: pickTransport(),
+            transportPreference,
+            gatewayReady: gatewayReady(),
             credential: credential === void 0 ? "pending" : "session-cookie",
             dshVersion: dshVersion ?? null,
             supportedDsh: SUPPORTED_DSH_RANGE,
@@ -630,7 +654,7 @@ export async function apply(ctx, config) {
 
         // POST /x/headless : create a session in the web process and prompt it.
         if (req.method === "POST" && path === HEADLESS) {
-          if (dshCompatible === false && config.allowUnsupportedDsh !== true) {
+          if (dshCompatible === false && !allowUnsupported) {
             sendJson(res, 409, {
               ok: false,
               dshVersion,

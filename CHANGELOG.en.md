@@ -16,8 +16,22 @@ Version numbers follow the plugin's own `package.json`. Usage and install: [READ
   streamed frames through `turn/end` and `stream/end`; `/active` reported `count=1` while running and
   `count=0` after; `/adopt` answered 200 for an accounted session, 409 for an unaccounted one and 404
   for an unknown id — same semantics as the HTTP channel.
+- **New `transport` config (`auto` / `gateway` / `api`)** plus two ops switches:
+  `DSH_WEB_SUBMIT_TRANSPORT` (overrides the channel) and `DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED=1`
+  (accept an out-of-range host). A bad environment can be rolled back to `api` by restarting with an
+  environment variable, no code change. `health` also reports `transportPreference` and `gatewayReady`.
 - The `api` channel stays as the fallback; its HTTP-specific logic (endpoint spelling / envelope /
   parameter probing, cookie exchange) is untouched.
+- **Full verification matrix** (dsh 0.2.1-rc.2, throwaway profile, port 3181):
+  1. `auto` → `transport: gateway`: POST completed, `/status` 23 events with `assistant/message`,
+     `/events` 33 frames through `stream/end`, `/active` 1 → 0;
+  2. submission with `provider`/`model`: response echoes `{deepseek-official, deepseek-flash}` and the
+     task completes (`session.selectModel` works over the gateway);
+  3. forced `transport=api`: task completes and `credential` becomes `session-cookie` (fallback intact);
+  4. `DSH_VERSION=0.3.0`: `compatible=false`, POST answers `409` with `dshVersion`/`supportedDsh`;
+  5. `DSH_VERSION=0.3.0` + `DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED=1`: POST `200` and the task completes;
+  6. `/adopt`: `200` for an accounted session, `404` for an unknown one (`409` for unaccounted, same as
+     the HTTP channel).
 
 ## v0.2.7
 

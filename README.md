@@ -43,7 +43,8 @@
 | `gateway`(优先) | 进程内有 `typertGateway`,且 `connection.browserPeer` 可用(dsh >= 0.2.1-rc.2) | `gateway.invoke({ peer, namespace, method, args: { request } })` —— 进程内直调,无 HTTP、无 Cookie;owner peer 由 connection 服务提供,`invoke()` 会断言 `peer.signal` |
 | `api`(回退) | 上述任一不可用(更早的 harness) | 本进程 `/api` 面上带签名 Cookie 请求;401 时丢弃并重换一次 |
 
-`GET /x/headless/health` 的 `transport` 字段直接告诉你当前用的是哪条。
+`GET /x/headless/health` 的 `transport` 字段直接告诉你当前用的是哪条;`transportPreference` 是你配的值,
+`gatewayReady` 表示进程内 gateway + owner peer 此刻是否可用(便于确认「强制 gateway 但环境不支持」这类错配)。
 
 **为什么不在失败时切换**:`session/create` 与 `session/prompt` 若在另一条通道重放,同一个任务会提交两次,
 所以只在启动时择一,单次调用失败就如实报错。
@@ -354,7 +355,8 @@ zstdcat ~/.dsh/sessions/<workspace>/<sessionId>/session.v4.jsonl*.zstd |
 | `maxBodyBytes` | `1048576` | 请求体上限 |
 | `pollIntervalMs` | `1500` | SSE 背后的轮询间隔 |
 | `defaultPermission` | `""`(不套用) | 提交的会话默认套用的权限预设名;请求体带 `permission` 时以请求体为准 |
-| `allowUnsupportedDsh` | `false` | 宿主 dsh 超出支持范围时仍允许提交(默认拒绝,`409`) |
+| `allowUnsupportedDsh` | `false` | 宿主 dsh 超出支持范围时仍允许提交(默认拒绝,`409`);环境变量 `DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED=1` 等价 |
+| `transport` | `"auto"` | `auto`(探测:gateway 优先)/`gateway`/`api`(强制);环境变量 `DSH_WEB_SUBMIT_TRANSPORT` 优先于配置 |
 
 ## 变更历史
 
