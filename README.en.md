@@ -5,9 +5,23 @@ from the command line — the task executes inside the web process, so the Web
 UI shows it live (same session store, same event stream), and permission /
 approval questions appear in the Web UI.
 
-No separate headless process, no webhook glue: one plugin, four endpoints.
+No separate headless process, no webhook glue: one plugin, six endpoints.
 
 > 中文文档:[README.md](README.md)
+
+## Quick orientation (callers, AI agents, scripts)
+
+1. **A task is only visible in the Web UI if it runs inside the web process** — there are exactly
+   two ways in: call this plugin's HTTP endpoints, or wrap `dsh headless "task"` with
+   [`examples/headless-shim.sh`](examples/headless-shim.sh).
+2. **A bare `dsh headless` is always a separate process**: invisible in the UI, no sidebar entry,
+   no completion signal. **Installing the plugin does not change that** — the CLI resolves that
+   subcommand before any plugin is loaded, so a plugin cannot intercept it.
+3. **Unattended runs must pass `permission`** (or set `defaultPermission` in the plugin config);
+   otherwise an approval step stalls waiting for a human. Decide success from `turn/end` →
+   `reason.kind`, not from the HTTP 200 at submit time.
+
+The sections below cover endpoints → install → usage in that order.
 
 ## Endpoints
 
@@ -53,7 +67,7 @@ envelope this harness uses, so either generation works.
 
 | dsh version | `/api` authentication | Endpoints and arguments | Status |
 |---|---|---|---|
-| `0.2.1-alpha.4` (tested here) | Signed cookie required; the plugin mints it in-process from the launch token | typert endpoints `session/create`, `session/prompt`; arguments wrapped as `args.request`; history via `session.page` (`address` + `throughSeq`) | Verified end to end |
+| `0.2.1-alpha.4` / `0.2.1-rc.2` (tested here) | Signed cookie required; the plugin mints it in-process from the launch token | typert endpoints `session/create`, `session/prompt`; arguments wrapped as `args.request`; history via `session.page` (`address` + `throughSeq`) | Verified end to end |
 | earlier `0.2.x` | `/api` is open on loopback; the exchange is skipped | dotted endpoints `session.create`, `session.prompt`; arguments at the payload top level; history via `session.history` | Compatibility branch kept, not regression-tested per release |
 
 `package.json` declares `dsh.engines.dsh >= 0.2.0-rc.2` and Node `>=20`. The only npm
@@ -65,6 +79,14 @@ The plugin hard-codes neither generation: on the first call it probes outward
 worked, so both harness generations keep working.
 
 ## Install
+
+Two separate things — do not conflate them: the **plugin** (required, provides the HTTP endpoints)
+and the optional **shim** (makes `dsh headless` use those endpoints). `dsh plugin` installs the
+plugin only: it does not — and cannot — register anything as a `dsh` command. (`dsh plugin` just
+forwards its arguments to pnpm inside the profile directory; there is no postinstall hook to hang
+that on, and it should not rewrite your PATH.)
+
+### 1. Install the plugin (required)
 
 Install this repository directly:
 
@@ -87,9 +109,82 @@ The bundle patch rule (`cordis.patch.yml`) is applied automatically by
 `dsh plugin add`, so no manual edit to the host profile is needed.
 Restart `dsh web` to load the plugin.
 
+Verify:
+
+```bash
+curl -s http://127.0.0.1:3080/x/headless/health
+# {"ok":true,"plugin":"dsh-web-submit","routePrefix":"/x","port":3080,"credential":"session-cookie"}
+```
+
+### 2. Optional: install the shim (so `dsh headless "task"` goes through the plugin)
+
+With the plugin alone, `dsh headless "task"` still starts a separate process: invisible in the UI,
+no sidebar entry, no completion signal. If the caller (a human, or an AI/script) wants the in-process
+behaviour while keeping the command line unchanged, install the shim:
+
+```bash
+install -m 0755 examples/headless-shim.sh ~/.local/bin/dsh
+```
+
+The shim must sit on PATH **ahead of** the real dsh (`~/.local/bin` usually qualifies; check the
+order when `~/.npm-global/bin` is also on PATH):
+
+```bash
+type -a dsh
+# dsh is /home/you/.local/bin/dsh       <- the shim, must come first
+# dsh is /home/you/.npm-global/bin/dsh  <- the real CLI
+```
+
+`dsh headless "task"` then means: submit to the web process on 3080 → wait for `turn/end` → print the
+final answer to stdout, with `sessionId` on stderr (for troubleshooting and for finding it in the UI).
+
+| Input | Shim behaviour |
+|---|---|
+| `dsh headless "task"` / `dsh --profile headless "task"` | `POST /x/headless`, wait for `turn/end` |
+| Task from stdin (`… \| dsh headless -`, or no arguments + a pipe) | Same, task text comes from stdin |
+| `dsh headless --json` / `--session-id` / `-h` / `--help` | Passed through to the real CLI (no equivalent here) |
+| Unknown option (e.g. `--foo`) | Passed through to the real CLI (never guesses) |
+| Non-headless subcommand (`dsh web`, `dsh plugin …`) | Passed through to the real CLI |
+| Plugin unavailable (health not 200 / submit failed) | Warns on stderr, then falls back to the real CLI (separate process) |
+
+Extra task-level options the shim consumes (never forwarded to the real dsh):
+
+| Option | Meaning |
+|---|---|
+| `-C, --cwd <dir>` | Working directory (also the sandbox write boundary); default `$PWD` |
+| `--preset <name>` | Agent preset name; defaults to the profile default |
+| `--permission <name>` | Permission preset; use `danger-full-access` for unattended runs |
+| `--provider <id>` `--model <id>` | Select the model (both required together) |
+| `--effort <level>` | `reasoningEffort` (`off`/`low`/`medium`/`high`/`max`; needs provider+model) |
+| `--timeout <seconds>` | Upper bound for waiting on `turn/end`; default 3600 |
+
+```bash
+dsh headless --permission danger-full-access -C /path/to/repo "run the tests and report back"
+echo "just reply OK" | dsh headless --permission danger-full-access   # task from stdin
+```
+
+Notes:
+
+- Environment variables mirror the CLI: `DSH_WEB_SUBMIT_URL` (default `http://127.0.0.1:3080`),
+  `DSH_HEADLESS_CWD`, `DSH_HEADLESS_TIMEOUT`, `DSH_HEADLESS_CLI` (path to the real dsh; set it when
+  auto-detection fails or when it would resolve back to the shim itself).
+- **Interactive/automation shells only.** systemd units launch `dsh` by absolute path and therefore
+  bypass the shim — deliberately.
+- Install under `~/.local/bin` only; do not shadow `/usr/local/bin/dsh` (that affects every user and
+  every other caller).
+- Uninstall: `rm ~/.local/bin/dsh`. The plugin is unaffected and the HTTP endpoints keep working.
+- When the plugin is unavailable and the run falls back to the real CLI, shim-only options (`--cwd`,
+  `--permission`, …) are forwarded verbatim and rejected there — deliberate: the shim never guesses.
+
 ## Real usage (end to end)
 
 Pick the shape that matches whether you need to watch progress. Examples use `BASE=http://127.0.0.1:3080`.
+
+With the shim installed, every HTTP shape below collapses into one command — handy for scripts and AI callers:
+
+```bash
+dsh headless --permission danger-full-access -C /path/to/repo "summarize the README and suggest improvements"
+```
 
 ### A. Interactive: watch it run
 
@@ -209,6 +304,9 @@ Decide success from the `turn/end` event's `reason.kind` (`completed` is normal;
 `aborted` / `failed` are not) — not from the HTTP 200 you got at submit time,
 which only means the task was accepted.
 
+The shim does this for you: it prints the last `assistant/message` text to stdout and exits
+0 on `completed`, 1 otherwise.
+
 ### Troubleshooting checklist
 
 | Want to confirm | How |
@@ -217,6 +315,8 @@ which only means the task was accepted.
 | Plugin loaded, credential mode | `GET /x/headless/health` -> `credential: session-cookie` (after the first successful call) |
 | Any approval prompt / stall | `approval` occurrences in the session event stream should be 0 (when `permission` is set) |
 | Anything running right now | `GET /x/headless/active` -> `{ok,count,active[]}` (check count=0 before restarting `dsh web`) |
+| `dsh headless` ran but nothing appears in the sidebar | `type -a dsh`: the first entry must be `~/.local/bin/dsh`; `falling back to dsh headless CLI` on stderr means the plugin was unavailable and the run used a separate process |
+| Shim says `real dsh not found` | Set `DSH_HEADLESS_CLI=/path/to/dsh`; it must not point at the shim itself (the script detects self-reference and refuses) |
 
 ## Permissions and unattended runs (`permission`)
 

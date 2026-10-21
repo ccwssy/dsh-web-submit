@@ -3,6 +3,20 @@
 本仓库是 `deepseek-ai/dsh-web-submit` 的 fork（维护者维护）。版本号跟随插件自身 `package.json`。
 用法与安装见 [README.md](README.md)。
 
+## v0.2.5
+
+- **`examples/headless-shim.sh` 入库**:把 `dsh headless "任务"` 转成 `POST /x/headless` 的参考 shim
+  从维护者本机搬进仓库。支持任务级选项 `-C/--cwd`、`--preset`、`--permission`、
+  `--provider`/`--model`、`--effort`、`--timeout`;`--json`/`--session-id`/`-h`/`--help`、未知选项
+  与非 headless 子命令一律原样回退真实 CLI;插件 health 失败时告警并回退;检测
+  `DSH_HEADLESS_CLI` 自指,避免把真实 dsh 解析成 shim 自己而无限递归。
+- **安装文档重写(中英)**:明确插件与 shim 是两件独立的事 —— `dsh plugin` 只装插件,
+  不会也无法注册 `dsh` 命令(它只是把参数转发给 profile 里的 pnpm);裸 `dsh headless`
+  即便装了插件仍是独立进程、UI 不可见。新增「给调用方的最短说明」、`type -a dsh` 校验、
+  回退规则表与卸载步骤。
+- **实测**:dsh `0.2.1-rc.2` + 插件 0.2.4,shim 以参数与 stdin 两种方式提交真实任务,
+  stdout 契约与退出码均通过;`--help`/`--version` 等形态回退真实 CLI 正常。
+
 ## v0.2.4
 
 - **`POST /x/headless` 支持可选模型**:body 新增 `provider` / `model` / `reasoningEffort`,

@@ -3,6 +3,22 @@
 This repository is a fork of `deepseek-ai/dsh-web-submit` (maintained by the maintainer).
 Version numbers follow the plugin's own `package.json`. Usage and install: [README.en.md](README.en.md).
 
+## v0.2.5
+
+- **`examples/headless-shim.sh` is now in the repository**: the reference shim that turns
+  `dsh headless "task"` into `POST /x/headless`, previously only on the maintainer's machine.
+  It accepts task-level options `-C/--cwd`, `--preset`, `--permission`, `--provider`/`--model`,
+  `--effort` and `--timeout`; `--json`/`--session-id`/`-h`/`--help`, unknown options and
+  non-headless subcommands are passed through to the real CLI; a failing health check warns and
+  falls back; a self-referencing `DSH_HEADLESS_CLI` is detected so the shim can never exec itself.
+- **Install docs rewritten (both languages)**: the plugin and the shim are two separate things —
+  `dsh plugin` installs the plugin only and cannot register a `dsh` command (it just forwards
+  arguments to pnpm inside the profile); a bare `dsh headless` stays a separate, UI-invisible
+  process even with the plugin installed. Adds a caller-facing quick orientation, `type -a dsh`
+  verification, the pass-through/fallback table and uninstall steps.
+- **Verified**: dsh `0.2.1-rc.2` + plugin 0.2.4, the shim submitted real tasks via arguments and
+  via stdin, with the expected stdout contract and exit codes; `--help`/`--version` pass through.
+
 ## v0.2.4
 
 - **`POST /x/headless` takes an optional model**: the body accepts `provider` / `model` /

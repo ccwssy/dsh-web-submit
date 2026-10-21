@@ -3,9 +3,20 @@
 让命令行驱动**正在运行的** `dsh web` 实例的 DeepSeek Harness 插件 —— 任务在 web 进程内执行,
 因此 Web UI 实时可见(同一会话存储、同一事件流),权限/审批提示也会出现在 Web UI 里。
 
-不需要另起 headless 进程,也不需要 webhook 串联:一个插件、四个端点。
+不需要另起 headless 进程,也不需要 webhook 串联:一个插件、六个端点。
 
 > English documentation: [README.en.md](README.en.md)
+
+## 给调用方的最短说明(插件 / AI / 脚本)
+
+1. **任务要进 web 进程才在 UI 可见** —— 只有两条路:直接请求本插件的 HTTP 端点,或通过
+   [`examples/headless-shim.sh`](examples/headless-shim.sh) 包装的 `dsh headless "任务"`。
+2. **裸 `dsh headless` 永远是独立进程**,UI 里看不到、没有侧栏与通知;**装了插件也不会改变这一点**
+   —— 那个子命令由 dsh CLI 在插件加载之前就解析完了,插件无权介入。
+3. **无人值守必须带 `permission`**(或在插件配置里设 `defaultPermission`),否则遇到审批会挂起等人点;
+   判成败看事件流里 `turn/end` 的 `reason.kind`,不是提交时的 HTTP 200。
+
+以下三节按「端点 → 安装 → 用法」展开,细节都在里面。
 
 ## 端点
 
@@ -41,7 +52,7 @@
 
 | dsh 版本 | `/api` 鉴权 | 端点与参数 | 状态 |
 |---|---|---|---|
-| `0.2.1-alpha.4`(本仓库实测版本) | 必须带签名 Cookie,插件用进程内启动令牌自动换取 | typert 端点 `session/create`、`session/prompt`;参数包在 `args.request`;历史读取走 `session.page`(`address` + `throughSeq`) | 已端到端实测通过 |
+| `0.2.1-alpha.4` / `0.2.1-rc.2`(本仓库实测) | 必须带签名 Cookie,插件用进程内启动令牌自动换取 | typert 端点 `session/create`、`session/prompt`;参数包在 `args.request`;历史读取走 `session.page`(`address` + `throughSeq`) | 已端到端实测通过 |
 | 更早的 `0.2.x` | `/api` 在回环上开放,插件跳过换取直接请求 | 点号端点 `session.create`、`session.prompt`;参数放 payload 顶层;历史走 `session.history` | 保留兼容分支,未逐版回归 |
 
 `package.json` 声明 `dsh.engines.dsh >= 0.2.0-rc.2`、Node `>=20`。插件自身的 npm 依赖只有
@@ -51,6 +62,12 @@
 成功一次后缓存复用,因此新老两代 harness 都能工作。
 
 ## 安装
+
+分两件事,别混:**插件**(必需,提供 HTTP 端点)和 **shim**(可选,让 `dsh headless` 用上这些端点)。
+`dsh plugin` 只装插件 —— 它不会、也无法顺带把任何东西注册成 `dsh` 命令
+(`dsh plugin` 本质是把参数转发给 profile 目录里的 pnpm,没有 postinstall 钩子可挂,也不该改用户的 PATH)。
+
+### 1. 装插件(必需)
 
 直接安装本仓库:
 
@@ -71,9 +88,76 @@ Windows:`dsh plugin --profile web add file:C:/path/to/dsh-web-submit`(换成克�
 `dsh plugin add` 会自动应用 bundle patch 规则(`cordis.patch.yml`),无需手工修改宿主 profile。
 重启 `dsh web` 后生效。
 
+验证:
+
+```bash
+curl -s http://127.0.0.1:3080/x/headless/health
+# {"ok":true,"plugin":"dsh-web-submit","routePrefix":"/x","port":3080,"credential":"session-cookie"}
+```
+
+### 2. 可选:装 shim(让 `dsh headless "任务"` 走插件)
+
+只装插件时,`dsh headless "任务"` 仍然启动独立进程:UI 不可见、侧栏没有、没有完成通知。
+如果调用方(人或 AI/脚本)希望**命令行形式不变**地拿到 web 进程内的行为,装 shim:
+
+```bash
+install -m 0755 examples/headless-shim.sh ~/.local/bin/dsh
+```
+
+shim 必须放在 PATH 中**先于**真实 dsh 的位置(`~/.local/bin` 通常已满足;`~/.npm-global/bin` 也在 PATH 时确认顺序):
+
+```bash
+type -a dsh
+# dsh 是 /home/you/.local/bin/dsh       ← shim,必须在最前
+# dsh 是 /home/you/.npm-global/bin/dsh  ← 真实 CLI
+```
+
+装好后 `dsh headless "任务"` 的语义变成:提交到 3080 的 web 进程 → 等 `turn/end` → 最终答案打到 stdout,
+`sessionId` 打到 stderr(便于排障与去 Web UI 里找)。
+
+| 输入 | shim 行为 |
+|---|---|
+| `dsh headless "任务"` / `dsh --profile headless "任务"` | 转 `POST /x/headless`,等 `turn/end` |
+| 从 stdin 读(`… \| dsh headless -`,或无参数 + 管道) | 同上,任务文本来自 stdin |
+| `dsh headless --json` / `--session-id` / `-h` / `--help` | 原样回退真实 CLI(插件无等价语义) |
+| 未知选项(如 `--foo`) | 原样回退真实 CLI(不猜调用方意图) |
+| 非 headless 子命令(`dsh web`、`dsh plugin …`) | 原样回退真实 CLI |
+| 插件不可用(health 非 200 / 提交失败) | stderr 告警后回退真实 CLI(独立进程) |
+
+shim 额外识别的任务级选项(只在本脚本消费,不会传给真实 dsh):
+
+| 选项 | 作用 |
+|---|---|
+| `-C, --cwd <dir>` | 工作目录(也是沙箱写边界),默认 `$PWD` |
+| `--preset <name>` | agent 预设名,默认用 profile 默认预设 |
+| `--permission <name>` | 权限预设;无人值守给 `danger-full-access` |
+| `--provider <id>` `--model <id>` | 指定模型(必须成对出现) |
+| `--effort <level>` | `reasoningEffort`(`off`/`low`/`medium`/`high`/`max`,需 provider+model) |
+| `--timeout <seconds>` | 等待 `turn/end` 的上限,默认 3600 |
+
+```bash
+dsh headless --permission danger-full-access -C /path/to/repo "跑测试并汇报结果"
+echo "只回复 OK" | dsh headless --permission danger-full-access   # 任务来自 stdin
+```
+
+注意:
+
+- 环境变量与原 CLI 对齐:`DSH_WEB_SUBMIT_URL`(默认 `http://127.0.0.1:3080`)、`DSH_HEADLESS_CWD`、
+  `DSH_HEADLESS_TIMEOUT`、`DSH_HEADLESS_CLI`(真实 dsh 路径;自动探测失败或出现自指时显式指定)。
+- **只影响交互/自动化 shell**。systemd 服务单元用绝对路径启动 `dsh`,不经过 shim —— 这是有意的设计。
+- 安装位置只建议 `~/.local/bin`,不要覆盖 `/usr/local/bin/dsh`(会影响所有用户以及别的东西的调用)。
+- 卸载:`rm ~/.local/bin/dsh`;插件不受影响,HTTP 端点照旧可用。
+- 插件不可用而回退真实 CLI 时,shim 专属选项(`--cwd`、`--permission` 等)会原样交给真实 CLI 并由它报错 —— 有意为之,不猜调用方意图。
+
 ## 实际使用(端到端)
 
 按「是否需要盯进度」分三种用法。示例统一用 `BASE=http://127.0.0.1:3080`。
+
+装了 shim 后,下面所有 HTTP 用法都可以写成一行命令,等价且更适合脚本/AI:
+
+```bash
+dsh headless --permission danger-full-access -C /path/to/repo "总结 README 并给出改进建议"
+```
 
 ### A. 交互式:边跑边看
 
@@ -185,6 +269,9 @@ print(texts[-1] if texts else "")'
 判成败**看 `turn/end` 的 `reason.kind`**(`completed` 为正常;`aborted` / `failed` 为异常)——
 不要只看提交时返回的 HTTP 200(那只说明任务被接受了)。
 
+用 shim 时这一步不用手写:它已经把最后一条 `assistant/message` 的文本打到 stdout,
+退出码就是判据(0 = `completed`,1 = 其他)。
+
 ### 排障自查
 
 | 想确认 | 怎么看 |
@@ -193,6 +280,8 @@ print(texts[-1] if texts else "")'
 | 插件是否加载、凭证模式 | `GET /x/headless/health` → `credential: session-cookie`(首次成功调用后) |
 | 有没有弹审批 / 挂起 | 会话事件流里 `approval` 出现次数应为 0(带 `permission` 时) |
 | 现在有没有任务在跑 | `GET /x/headless/active` → `{ok,count,active[]}`(重启 `dsh web` 前先确认 count=0) |
+| 跑 `dsh headless` 后 UI 侧栏没有 | `type -a dsh`:第一个必须是 `~/.local/bin/dsh`;stderr 出现 `falling back to dsh headless CLI` 说明插件不可用、已回退独立进程 |
+| shim 报 `real dsh not found` | 显式给 `DSH_HEADLESS_CLI=/path/to/dsh`;该值不能指向 shim 自身(脚本会检测自指并拒绝) |
 
 ## 权限预设与无人值守(`permission`)
 
