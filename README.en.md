@@ -43,8 +43,22 @@ the plugin needs for `/api` is minted by the plugin itself (next section).
 
 ## How it talks to the harness
 
-The plugin runs inside the `dsh web` process, so it can do what an external CLI
-cannot: mint the `/api` credential from the process launch token.
+The plugin runs inside the `dsh web` process and has two channels. **One is picked on first use and
+then fixed**:
+
+| Channel | Available when | Mechanism |
+|---|---|---|
+| `gateway` (preferred) | `typertGateway` exists and `connection.browserPeer` is available (dsh >= 0.2.1-rc.2) | `gateway.invoke({ peer, namespace, method, args: { request } })` — in-process, no HTTP hop and no cookie; the owner Peer comes from the connection service because `invoke()` asserts `peer.signal` |
+| `api` (fallback) | either of the above is missing (older harness) | `/api` on this process with a signed cookie; a 401 drops and re-mints it once |
+
+`GET /x/headless/health` reports the active channel in `transport`.
+
+**Why it never switches on failure**: replaying `session/create` or `session/prompt` over the other
+channel would submit the same task twice, so the choice is made once and a failing call is reported.
+
+### Credential details of the `api` channel
+
+It can do what an external CLI cannot: mint the `/api` credential from the process launch token.
 
 - **dsh >= 0.2.1-alpha.4** — `/api` is fenced by `Connection.admit()` and requires
   the signed browser/API cookie. The launch token is process-local and never
@@ -86,7 +100,7 @@ Outside it, two gates refuse the work:
 | `< 0.2.1-alpha.4` | `/api` is open on loopback; the exchange is skipped | dotted endpoints `session.create`, `session.prompt`; arguments at the payload top level; history via `session.history` | **Not supported**: the probe branch remains in code, but the manifest makes dsh refuse the install |
 | `>= 0.3.0` | not verified | not verified | **Not supported**: widen after testing |
 
-`GET /x/headless/health` reports `dshVersion`, `supportedDsh` and `compatible`
+`GET /x/headless/health` reports `transport`, `dshVersion`, `supportedDsh` and `compatible`
 (`compatible: null` means the version is unknown).
 
 Node `>=20`. The only npm dependency the plugin itself needs is `@deepseek-ai/schemastery`;

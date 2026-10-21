@@ -3,6 +3,22 @@
 This repository is a fork of `deepseek-ai/dsh-web-submit` (maintained by the maintainer).
 Version numbers follow the plugin's own `package.json`. Usage and install: [README.en.md](README.en.md).
 
+## v0.2.8
+
+- **New in-process `gateway` transport (preferred)**: when `typertGateway` exists and
+  `connection.browserPeer` is available, RPCs go through
+  `gateway.invoke({ peer, namespace, method, args: { request } })` — no HTTP hop, no cookie, no 401
+  re-mint. Otherwise the existing `/api` + signed-cookie channel is used. **The choice is made on
+  first use and then fixed** (replaying create/prompt on the other channel would run a task twice).
+- **`health` gains a `transport` field** (`gateway` / `api`) so the active channel is visible.
+- **Verified** (throwaway profile, dsh 0.2.1-rc.2, port 3181): POST created a session and the task
+  completed; `/status` returned 23 events including `assistant/message` and `turn/end`; `/events`
+  streamed frames through `turn/end` and `stream/end`; `/active` reported `count=1` while running and
+  `count=0` after; `/adopt` answered 200 for an accounted session, 409 for an unaccounted one and 404
+  for an unknown id — same semantics as the HTTP channel.
+- The `api` channel stays as the fallback; its HTTP-specific logic (endpoint spelling / envelope /
+  parameter probing, cookie exchange) is untouched.
+
 ## v0.2.7
 
 - **The shim now works with plugin versions that have no `/health`**: a `404` health probe is treated

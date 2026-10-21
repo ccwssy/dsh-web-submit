@@ -354,8 +354,70 @@ export async function apply(ctx, config) {
     return { value: result.value, used };
   }
 
-  /** In-process RPC against the harness's own /api surface. */
+  /**
+   * Two transports into the harness:
+   * - "gateway": in-process typert gateway (dsh >= 0.2.1-rc.2) — no HTTP hop and
+   *   no /api credential, but it needs the Host's owner Peer;
+   * - "api": the process's own /api surface with the signed cookie minted from
+   *   the launch token (older harnesses, or a gateway that is not ready).
+   * The choice is made lazily, once, and then fixed: replaying create/prompt on
+   * the other transport could run one task twice.
+   */
+  let transport;
+
+  const connectionService = () => ctx.get("connection") ?? ctx.root?.get?.("connection");
+  const gatewayService = () => ctx.get("typertGateway") ?? ctx.root?.get?.("typertGateway");
+
+  function pickTransport() {
+    if (transport !== void 0) return transport;
+    const gateway = gatewayService();
+    const connection = connectionService();
+    transport =
+      gateway !== void 0 && typeof gateway.invoke === "function" && connection?.browserPeer !== void 0
+        ? "gateway"
+        : "api";
+    return transport;
+  }
+
+  /** "session.page" -> { namespace: "session", method: "page" }. */
+  function splitRemote(method) {
+    const separator = method.includes("/") ? "/" : ".";
+    const at = method.indexOf(separator);
+    if (at <= 0) throw new Error("unsupported remote method: " + method);
+    return { namespace: method.slice(0, at), method: method.slice(at + 1) };
+  }
+
+  /**
+   * One Remote call through the in-process gateway. The owner Peer comes from
+   * the Host connection service: invoke() asserts `peer.signal` and reads
+   * `peer.principal`, and only an owner principal skips remote-access checks.
+   */
+  async function gatewayCall(method, payload) {
+    const gateway = gatewayService();
+    const peer = connectionService()?.browserPeer;
+    if (gateway === void 0 || peer === void 0) {
+      throw new Error("typert gateway is unavailable in this process");
+    }
+    const remote = splitRemote(method);
+    const invoke = (field) =>
+      gateway.invoke({
+        peer,
+        namespace: remote.namespace,
+        method: remote.method,
+        args: { [field]: payload },
+      });
+    try {
+      return await invoke("request");
+    } catch (error) {
+      // The descriptor's request field was renamed once already (`_request`).
+      if (String((error && error.message) || error).includes('missing "_request"')) return invoke("_request");
+      throw error;
+    }
+  }
+
+  /** One harness RPC over the selected transport. */
   async function rpc(method, payload) {
+    if (pickTransport() === "gateway") return gatewayCall(method, payload);
     const known = wireEndpoints.get(method);
     const candidates =
       known !== void 0
@@ -499,6 +561,7 @@ export async function apply(ctx, config) {
             plugin: name,
             routePrefix: prefix,
             port: ctx.webServer.port ?? null,
+            transport: pickTransport(),
             credential: credential === void 0 ? "pending" : "session-cookie",
             dshVersion: dshVersion ?? null,
             supportedDsh: SUPPORTED_DSH_RANGE,

@@ -36,7 +36,21 @@
 
 ## 与 harness 的通信方式
 
-插件运行在 `dsh web` 进程内,因此能做到外部 CLI 做不到的事:用进程自己的启动令牌换取 `/api` 凭证。
+插件运行在 `dsh web` 进程内,有两条通道,**首次调用时自动择一,之后固定**:
+
+| 通道 | 生效条件 | 实现 |
+|---|---|---|
+| `gateway`(优先) | 进程内有 `typertGateway`,且 `connection.browserPeer` 可用(dsh >= 0.2.1-rc.2) | `gateway.invoke({ peer, namespace, method, args: { request } })` —— 进程内直调,无 HTTP、无 Cookie;owner peer 由 connection 服务提供,`invoke()` 会断言 `peer.signal` |
+| `api`(回退) | 上述任一不可用(更早的 harness) | 本进程 `/api` 面上带签名 Cookie 请求;401 时丢弃并重换一次 |
+
+`GET /x/headless/health` 的 `transport` 字段直接告诉你当前用的是哪条。
+
+**为什么不在失败时切换**:`session/create` 与 `session/prompt` 若在另一条通道重放,同一个任务会提交两次,
+所以只在启动时择一,单次调用失败就如实报错。
+
+### `api` 通道的凭证细节
+
+外部 CLI 做不到的事:用进程自己的启动令牌换取 `/api` 凭证。
 
 - **dsh >= 0.2.1-alpha.4**:`/api` 由 `Connection.admit()` 把关,必须带签名 Cookie,而启动令牌只存在于进程内、不落盘。
   插件向 `connection` 服务索取带令牌的 URL(`HostConnectionService.authenticatedUrl`),
@@ -68,7 +82,7 @@
 | `< 0.2.1-alpha.4` | `/api` 在回环上开放,插件跳过换取直接请求 | 点号端点 `session.create`、`session.prompt`;参数放 payload 顶层;历史走 `session.history` | **不在支持范围**:代码里保留探测分支,但 manifest 会让 dsh 拒绝安装 |
 | `>= 0.3.0` | 未验证 | 未验证 | **不在支持范围**:实测后再放宽 |
 
-`GET /x/headless/health` 直接回 `dshVersion`、`supportedDsh`、`compatible`
+`GET /x/headless/health` 直接回 `transport`、`dshVersion`、`supportedDsh`、`compatible`
 (`compatible: null` 表示版本未知)。
 
 Node `>=20`。插件自身的 npm 依赖只有
