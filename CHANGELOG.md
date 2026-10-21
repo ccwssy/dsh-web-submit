@@ -3,6 +3,29 @@
 本仓库是 `deepseek-ai/dsh-web-submit` 的 fork（维护者维护）。版本号跟随插件自身 `package.json`。
 用法与安装见 [README.md](README.md)。
 
+## v0.2.8
+
+- **新增进程内 `gateway` 传输(优先)**:进程里有 `typertGateway` 且 `connection.browserPeer` 可用时,
+  RPC 走 `gateway.invoke({ peer, namespace, method, args: { request } })` —— 无 HTTP 跳转、无 Cookie、
+  无 401 重换;否则回退原有 `/api` + 签名 Cookie 通道。**只在首次调用时择一并固定**
+  (create/prompt 在另一条通道重放会让同一任务跑两次)。
+- **`health` 新增 `transport` 字段**(`gateway` / `api`),便于确认当前通道。
+- **实测(临时 profile,dsh 0.2.1-rc.2,端口 3181)**:POST 建会话并跑完任务;`/status` 23 条事件含
+  `assistant/message` 与 `turn/end`;`/events` SSE 收到 `permission/preset`…`turn/end` 与 `stream/end`;
+  `/active` 运行中 `count=1`、结束后 `count=0`;`/adopt` 对已记账会话 200、对未记账会话 409、
+  不存在的会话 404(与 HTTP 通道语义一致)。
+- **新增 `transport` 配置(`auto` / `gateway` / `api`)** 与两个运维开关:
+  `DSH_WEB_SUBMIT_TRANSPORT`(覆盖通道)、`DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED=1`(允许越界版本);
+  出问题改环境变量重启即可回退到 `api`,不必改代码。`health` 同时回 `transportPreference` 与 `gatewayReady`。
+- 保留 `api` 通道作为兜底;HTTP 专属逻辑(端点拼写/信封/参数名探测、Cookie 换取)原样不动。
+- **完整验证矩阵**(dsh 0.2.1-rc.2,临时 profile,3181):
+  1. `auto` → `transport: gateway`:POST 完成、`/status` 23 事件含 `assistant/message`、`/events` 33 帧到 `stream/end`、`/active` 1→0;
+  2. 带 `provider`/`model` 提交:`model` 回显 `{deepseek-official, deepseek-flash}` 且任务完成(`session.selectModel` 走 gateway 正常);
+  3. 强制 `transport=api`:任务完成、`credential` 变 `session-cookie`(兜底通道无回归);
+  4. `DSH_VERSION=0.3.0`:`compatible=false`,POST 返回 `409` 并带 `dshVersion`/`supportedDsh`;
+  5. `DSH_VERSION=0.3.0` + `DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED=1`:POST `200` 且任务完成(放行分支);
+  6. `/adopt`:已记账会话 `200`、不存在 `404`(未记账会话 `409`,与 HTTP 通道一致)。
+
 ## v0.2.7
 
 - **shim 兼容没有 `/health` 的插件版本**:健康检查返回 `404` 时不再直接回退,而是视为「老版本插件,
