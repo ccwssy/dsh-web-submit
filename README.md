@@ -3,7 +3,10 @@
 让命令行驱动**正在运行的** `dsh web` 实例的 DeepSeek Harness 插件 —— 任务在 web 进程内执行,
 因此 Web UI 实时可见(同一会话存储、同一事件流),权限/审批提示也会出现在 Web UI 里。
 
-不需要另起 headless 进程,也不需要 webhook 串联:一个插件、六个端点。
+不需要另起 headless 进程,也不需要 webhook 串联:一个插件、七个端点。
+
+插件还自带 Web UI 半:设置 → 通用设置里有「headless 通道」开关(auto / gateway / api),
+侧边栏底部有带二次确认的「重启 DSH」按钮 —— 换通道、重启都可在界面里完成。
 
 > English documentation: [README.en.md](README.en.md)
 
@@ -18,7 +21,7 @@
 4. **只支持 dsh `>=0.2.1-alpha.4 <0.3.0`**:范围外 dsh 会拒绝安装,运行期提交返回 `409`
    (`health` 里的 `compatible` 可直接判断)。
 
-以下三节按「端点 → 安装 → 用法」展开,细节都在里面。
+以下各节按「端点 → 安装 → 用法 → 配置」展开,细节都在里面。
 
 ## 端点
 
@@ -338,6 +341,7 @@ print(texts[-1] if texts else "")'
 | 任务真的走了插件? | 会话应出现在 Web UI 侧栏对应 workspace 下;落到"未分组"说明走的是裸 `dsh headless` CLI(独立进程) |
 | 插件是否加载、凭证模式 | `GET /x/headless/health` → `credential: session-cookie`(首次成功调用后) |
 | 有没有弹审批 / 挂起 | 会话事件流里 `approval` 出现次数应为 0(带 `permission` 时) |
+| 点了重启按钮没用 / 提示不受托管 | `GET /x/headless/health` 的 `restartManaged`:`null` = 本进程不是 systemd 起的,端点会 `409`,只能手动重启;是任务在跑时也会 `409`,先看 `/active` 的 `count` |
 | 现在有没有任务在跑 | `GET /x/headless/active` → `{ok,count,active[]}`(重启 `dsh web` 前先确认 count=0) |
 | 跑 `dsh headless` 后 UI 侧栏没有 | `type -a dsh`:第一个必须是 `~/.local/bin/dsh`;stderr 出现 `falling back to dsh headless CLI` 说明插件不可用、已回退独立进程 |
 | shim 报 `real dsh not found` | 显式给 `DSH_HEADLESS_CLI=/path/to/dsh`;该值不能指向 shim 自身(脚本会检测自指并拒绝) |

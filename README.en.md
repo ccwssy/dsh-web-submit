@@ -5,7 +5,11 @@ from the command line — the task executes inside the web process, so the Web
 UI shows it live (same session store, same event stream), and permission /
 approval questions appear in the Web UI.
 
-No separate headless process, no webhook glue: one plugin, six endpoints.
+No separate headless process, no webhook glue: one plugin, seven endpoints.
+
+It also ships a client half: **Settings → General → “Headless transport”** switches the channel
+(auto / gateway / api), and the sidebar footer carries a “重启 DSH” restart button that asks for a
+second click — both right inside the Web UI.
 
 > 中文文档:[README.md](README.md)
 
