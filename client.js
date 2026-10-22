@@ -80,6 +80,8 @@ window.__ModuleLoader__.load({
       '.dws-rb{flex:none;align-items:center;width:100%;height:49px;color:var(--dsw-alias-label-primary);cursor:pointer;background:transparent;border:none;border-radius:12px;gap:8px;padding:0 8px 0 6px;font-family:inherit;font-size:14px;display:inline-flex;overflow:hidden;position:relative}',
       '.dws-rb:hover{background:var(--dsw-alias-bg-layer-2)}',
       '.dws-rb--armed{color:var(--dsw-alias-state-error-primary)}',
+      '.dws-rb--armed .dws-rb__icon{animation:dws-rb-pulse .55s ease-in-out infinite alternate}',
+      '@keyframes dws-rb-pulse{from{opacity:.35}to{opacity:1}}',
       '.dws-rb--armed:hover{background:var(--dsw-alias-state-error-primary);color:#fff}',
       '.dws-rb--rail{width:36px;height:36px;border-radius:50%;justify-content:center;gap:0;padding:0}',
       '.dws-rb__label{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}',
@@ -419,6 +421,7 @@ window.__ModuleLoader__.load({
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
           'aria-hidden': true,
+          className: 'dws-rb__icon',
         },
         h('path', { d: 'M23 4v6h-6' }),
         h('path', { d: 'M20.49 15a9 9 0 1 1-2.12-9.36L23 10' }),
@@ -434,6 +437,13 @@ window.__ModuleLoader__.load({
       const [phase, setPhase] = useState('idle')
       const [message, setMessage] = useState('')
       const [health, setHealth] = useState('checking')
+      /** 二次确认的武装计时器：4 秒内没有再点就回落到 idle。 */
+      const armTimer = useRef(null)
+
+      // 卸载时清掉武装计时器，避免组件销毁后仍 setState。
+      useEffect(() => () => {
+        if (armTimer.current !== null) clearTimeout(armTimer.current)
+      }, [])
 
       // 每 5 秒探一次 /x/headless/health：fetch 失败或非 200 视为离线。
       useEffect(() => {
@@ -457,6 +467,14 @@ window.__ModuleLoader__.load({
 
       const click = async () => {
         if (phase === 'sending' || phase === 'done') return
+        // 左下角极易误触：第一下只武装，4 秒内第二下才真正重启。
+        if (phase !== 'arming') {
+          setPhase('arming')
+          setMessage('')
+          armTimer.current = setTimeout(() => setPhase('idle'), 4000)
+          return
+        }
+        if (armTimer.current !== null) clearTimeout(armTimer.current)
         setPhase('sending')
         setMessage('')
         const error = await postRestart()
@@ -475,14 +493,29 @@ window.__ModuleLoader__.load({
       }
 
       const label =
-        phase === 'sending' ? '重启中…' : phase === 'done' ? '已触发' : phase === 'error' ? '失败' : '重启 DSH'
-      const title = message !== '' ? message : '点击后 dsh web 退出并由 systemd 拉起（约 10-20 秒）'
+        phase === 'sending'
+          ? '重启中…'
+          : phase === 'done'
+            ? '已触发'
+            : phase === 'error'
+              ? '失败'
+              : phase === 'arming'
+                ? '确认重启？'
+                : '重启 DSH'
+      const title =
+        message !== ''
+          ? message
+          : phase === 'arming'
+            ? '再点一次确认重启（4 秒内）'
+            : '点击后需再点一次确认；dsh web 退出并由 systemd 拉起（约 10-20 秒）'
       const statusText = health === 'ok' ? 'dsh 在线' : health === 'down' ? 'dsh 离线' : '检测中…'
       const dotClass =
         'dws-dot' +
         (health === 'ok' ? ' dws-dot--ok' : health === 'down' ? ' dws-dot--down' : ' dws-dot--unknown')
       const className =
-        'dws-rb' + (wide === true ? '' : ' dws-rb--rail') + (phase === 'sending' || phase === 'done' ? ' dws-rb--armed' : '')
+        'dws-rb' +
+        (wide === true ? '' : ' dws-rb--rail') +
+        (phase === 'arming' || phase === 'sending' || phase === 'done' ? ' dws-rb--armed' : '')
 
       return h(
         'button',

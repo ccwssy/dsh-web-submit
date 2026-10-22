@@ -19,11 +19,14 @@ Version numbers follow the plugin's own `package.json`. Usage and install: [READ
   first, then calls `process.exit(75)` to trip `Restart=on-failure`. The cgroup parse takes the
   **innermost** unit — the path also contains `user@1000.service`, and taking the first match names
   the wrong unit.
-- **“重启 DSH” button in the sidebar footer with a live status dot**: one click restarts (layout and
-  colours follow [`1123762794/dsh-web-restart`](https://github.com/1123762794/dsh-web-restart), while
-  the restart itself goes through this plugin's HTTP endpoint + systemd — no external script or
-  PowerShell). The dot probes `GET /x/headless/health` every 5 s and the page reloads itself once the
-  process is back. The settings row carries a second restart button that asks for a second click.
+- **“重启 DSH” button in the sidebar footer with a live status dot**: a single click does **not**
+  restart — the footer corner is easy to hit by accident, so the first click only arms the button (red
+  “确认重启?” with a pulsing icon) and the second click within 4 s runs it; otherwise it falls back on
+  its own (layout and colours follow
+  [`1123762794/dsh-web-restart`](https://github.com/1123762794/dsh-web-restart), while the restart
+  itself goes through this plugin's HTTP endpoint + systemd — no external script or PowerShell). The
+  dot probes `GET /x/headless/health` every 5 s and the page reloads itself once the process is back.
+  The settings row carries a second restart button that also asks for a second click.
 - **`health` gained `restartManaged`** (this process's unit name, `null` when unsupervised).
 - `package.json` gained `exports["./client"]` and `dsh.client` (`platform: web`; injects
   `dsh-client-ui-settings`, `dsh-client-ui-settings-general`, `dsh-client-ui-sidebar`,

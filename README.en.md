@@ -77,7 +77,9 @@ field), exactly like editing the config by hand.
 ### One-click restart (sidebar button)
 
 The sidebar footer carries a **“重启 DSH”** button (a labelled row with a status line when the rail is
-expanded, a round icon with a corner dot when it is collapsed). A click calls
+expanded, a round icon with a corner dot when it is collapsed). It takes **two clicks within 4 s**: the
+footer corner is easy to hit by accident, so the first click only arms the button (red “确认重启?” plus a
+pulsing icon) and it falls back after 4 s on its own. The confirmed click calls
 `POST /x/headless/restart`; the process exits, systemd relaunches it, and the page reloads itself once
 `health` answers again.
 

@@ -15,10 +15,11 @@
   (`session.list` 的 running 会话 `count > 0`)一律 `409`;进程不受 systemd 托管(无 `INVOCATION_ID`
   或 cgroup 里找不到单元)同样 `409`。放行时先回 `202`,再 `process.exit(75)` 触发 `Restart=on-failure`。
   cgroup 取**最内层**单元名 —— 路径里还有 `user@1000.service`,取第一个会认错单元。
-- **侧边栏底部「重启 DSH」按钮 + 在线状态点**:单击即重启(UX 参考 [`1123762794/dsh-web-restart`]
-  (https://github.com/1123762794/dsh-web-restart) 的布局与配色,但重启动作走本插件的 HTTP 端点 +
-  systemd,不依赖外部脚本/PowerShell),状态点每 5 秒探 `GET /x/headless/health`,重启后页面自动刷新。
-  设置行内另有一个带二次确认的重启按钮(切完通道就地重启)。
+- **侧边栏底部「重启 DSH」按钮 + 在线状态点**:单击**不能**重启 —— 左下角易误触,第一下只把按钮
+  武装成红色「确认重启?」(图标闪烁),**4 秒内再点一次**才执行,超时自动回落;确认后走本插件 HTTP 端点 +
+  systemd(UX 参考 [`1123762794/dsh-web-restart`](https://github.com/1123762794/dsh-web-restart)
+  的布局与配色,但不依赖外部脚本/PowerShell),状态点每 5 秒探 `GET /x/headless/health`,
+  重启后页面自动刷新。设置行内另有一个同样带二次确认的重启按钮(切完通道就地重启)。
 - **`health` 新增 `restartManaged`**(本进程的单元名,非托管为 `null`),UI 据此判断按钮可用性。
 - `package.json` 新增 `exports["./client"]` 与 `dsh.client`(`platform: web`,
   inject `dsh-client-ui-settings` / `dsh-client-ui-settings-general` / `dsh-client-ui-sidebar` /
