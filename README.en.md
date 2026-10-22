@@ -35,6 +35,7 @@ The sections below cover endpoints → install → usage in that order.
 | `GET` | `/x/headless/health` | Plugin state, credential mode and host version (`dshVersion` / `supportedDsh` / `compatible`) |
 | `GET` | `/x/headless/active` | Sessions whose turn is still running (`{ok,count,active[]}`); check it before a restart |
 | `POST` | `/x/headless/adopt` | `{"sessionId":"session-..."}`: re-register an existing session in the workspace matching its `cwd` |
+| `POST` | `/x/headless/restart` | Exit so systemd relaunches the process (new transport, new plugin version). **Refused with `409` while a task is running, and when nothing supervises the process**; on success it answers `202` then calls `process.exit(75)` to trip `Restart=on-failure` |
 
 Loopback requests only: every endpoint is refused unless the `Host` header is a
 loopback authority (`127.0.0.1` / `localhost`). That is a loopback check, not an
@@ -57,6 +58,37 @@ then fixed**:
 
 **Why it never switches on failure**: replaying `session/create` or `session/prompt` over the other
 channel would submit the same task twice, so the choice is made once and a failing call is reported.
+
+### Switching the channel in the Web UI
+
+The plugin ships a client half: **Settings → General → “Headless transport”** (directly under
+“Thinking language”) offers `Auto (gateway first)` / `gateway (in-process)` / `api (HTTP + signed cookie)`.
+The choice is written to this plugin's entry in the profile's `cordis.patch.yml` (the `transport`
+field), exactly like editing the config by hand.
+
+- `transport` is a schemastery **volatile field**: once written, the next `pickTransport()` in the same
+  process reads it without re-mounting the plugin.
+- The channel is still **fixed once chosen**, so a process that has already submitted a task needs a
+  `dsh web` restart to actually switch (the card's subtitle says so). After switching,
+  `GET /x/headless/health` reports the new `transportPreference` immediately while `transport` keeps
+  the old value until that restart.
+- `DSH_WEB_SUBMIT_TRANSPORT` still wins over the UI/config write, and using it requires a restart.
+
+### One-click restart (sidebar button)
+
+The sidebar footer carries a **“重启 DSH”** button (a labelled row with a status line when the rail is
+expanded, a round icon with a corner dot when it is collapsed). A click calls
+`POST /x/headless/restart`; the process exits, systemd relaunches it, and the page reloads itself once
+`health` answers again.
+
+- The dot probes `GET /x/headless/health` every 5 s: green = online, red = offline (it goes red for a
+  moment during the restart).
+- **Refused while a task is running**: the host checks the running sessions from `session.list` and
+  answers `409` when `count > 0`, so a channel switch never kills a live turn.
+- **Only under a service manager**: `health.restartManaged` is the unit name (`dsh-web.service`); on a
+  hand-started `dsh web` it is `null` and the endpoint answers `409` instead of taking the UI down.
+- The “Headless transport” row in Settings carries the same restart button (with a second click to
+  confirm), which is the natural place to restart right after switching the channel.
 
 ### Credential details of the `api` channel
 
@@ -397,7 +429,7 @@ move the task's output inside the session workspace instead of using this preset
 | `pollIntervalMs` | `1500` | Poll interval behind the SSE stream |
 | `defaultPermission` | `""` (off) | Permission preset applied to submitted sessions that carry no body override; the body's `permission` wins |
 | `allowUnsupportedDsh` | `false` | Submit anyway when the host dsh is outside the supported range (default: refuse with `409`); `DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED=1` is equivalent |
-| `transport` | `"auto"` | `auto` (probe, gateway first) / `gateway` / `api`; the `DSH_WEB_SUBMIT_TRANSPORT` environment variable wins over the config |
+| `transport` | `"auto"` | `auto` (probe, gateway first) / `gateway` / `api`; switchable in **Settings → General → Headless transport** (volatile, read on write); the `DSH_WEB_SUBMIT_TRANSPORT` environment variable wins over the config |
 
 ## Changelog
 

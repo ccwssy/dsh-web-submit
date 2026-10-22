@@ -3,6 +3,35 @@
 本仓库是 `deepseek-ai/dsh-web-submit` 的 fork（维护者维护）。版本号跟随插件自身 `package.json`。
 用法与安装见 [README.md](README.md)。
 
+## v0.2.9
+
+- **新增 Client 半(Web UI)**:**设置 → 通用设置 → 「headless 通道」**(在「思考语言」下方)
+  可选 `自动（gateway 优先）` / `gateway（进程内直调）` / `api（HTTP + 签名 Cookie）`,
+  写入 profile 的 `cordis.patch.yml` 里本插件条目的 `transport` 字段(与手改配置等价)。
+- **`transport` 改为 schemastery `.volatile()` 字段**:设置页写完后同一进程内下一份
+  `pickTransport()` 立即读到新值(`transportPreference` 由 apply 期常量改为每次现读,
+  `health` 也现读)。通道仍然「首次择一后固定」,换通道仍需重启进程。
+- **新增 `POST /x/headless/restart`**:让本进程退出、由 systemd 拉起。两道闸:有任务在跑
+  (`session.list` 的 running 会话 `count > 0`)一律 `409`;进程不受 systemd 托管(无 `INVOCATION_ID`
+  或 cgroup 里找不到单元)同样 `409`。放行时先回 `202`,再 `process.exit(75)` 触发 `Restart=on-failure`。
+  cgroup 取**最内层**单元名 —— 路径里还有 `user@1000.service`,取第一个会认错单元。
+- **侧边栏底部「重启 DSH」按钮 + 在线状态点**:单击即重启(UX 参考 [`1123762794/dsh-web-restart`]
+  (https://github.com/1123762794/dsh-web-restart) 的布局与配色,但重启动作走本插件的 HTTP 端点 +
+  systemd,不依赖外部脚本/PowerShell),状态点每 5 秒探 `GET /x/headless/health`,重启后页面自动刷新。
+  设置行内另有一个带二次确认的重启按钮(切完通道就地重启)。
+- **`health` 新增 `restartManaged`**(本进程的单元名,非托管为 `null`),UI 据此判断按钮可用性。
+- `package.json` 新增 `exports["./client"]` 与 `dsh.client`(`platform: web`,
+  inject `dsh-client-ui-settings` / `dsh-client-ui-settings-general` / `dsh-client-ui-sidebar` /
+  `dsh-client-locale`)。
+- **实测(dsh 0.2.1-rc.2,生产实例 3080)**:
+  1. 设置页出现「headless 通道」行;选 `api` 后 `~/.dsh/profiles/web/cordis.patch.yml` 写入
+     `transport: api`,`health.transportPreference` 立刻变 `api` 而 `transport` 仍为 `gateway`(未重启);
+  2. 重启后 `health.transport` 变 `api`(强制 api 通道生效);
+  3. 侧边栏按钮点击 → 日志 `restart requested over HTTP; exiting for dsh-web.service to relaunch`
+     → `Main process exited, code=exited, status=75/TEMPFAIL` → systemd 重新 `Started`,页面自动刷新
+     回到「重启 DSH / dsh 在线」;
+  4. `health.restartManaged` 返回 `dsh-web.service`。
+
 ## v0.2.8
 
 - **新增进程内 `gateway` 传输(优先)**:进程里有 `typertGateway` 且 `connection.browserPeer` 可用时,

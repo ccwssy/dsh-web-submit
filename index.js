@@ -43,6 +43,28 @@ export const inject = ["webServer"];
  */
 export const SUPPORTED_DSH_RANGE = ">=0.2.1-alpha.4 <0.3.0";
 
+/**
+ * `.volatile()` makes a settings-card write take effect without re-mounting the
+ * plugin (schemastery >= 3.18.3). Older hosts return the plain field, which
+ * still works — the value is then only re-read when the plugin re-applies.
+ */
+export function applyVolatile(field) {
+  return typeof field?.volatile === "function" ? field.volatile() : field;
+}
+
+/**
+ * Read a config field that may be a volatile reference (`.get()`) or a plain
+ * value. Any failure reads as undefined so callers fall back to their default.
+ */
+export function readVolatile(ref) {
+  try {
+    if (ref !== null && typeof ref === "object" && typeof ref.get === "function") return ref.get();
+    return ref;
+  } catch {
+    return void 0;
+  }
+}
+
 export const Config = z.object({
   routePrefix: z.string().default("/x"),
   maxBodyBytes: z.number().default(1_048_576),
@@ -51,8 +73,11 @@ export const Config = z.object({
   defaultPermission: z.string().default(""),
   /** Submit anyway when the host dsh is outside SUPPORTED_DSH_RANGE. */
   allowUnsupportedDsh: z.boolean().default(false),
-  /** Transport: "auto" (probe), "gateway", or "api". */
-  transport: z.string().default("auto"),
+  /**
+   * Transport: "auto" (probe), "gateway", or "api". Volatile so the settings
+   * card's write is visible to this process without re-mounting the plugin.
+   */
+  transport: applyVolatile(z.string().default("auto")),
 });
 
 /** Parse `1.2.3` / `v1.2.3-rc.4`; undefined when the text is not a version. */
@@ -155,6 +180,25 @@ export function detectDshVersion() {
 }
 
 
+/**
+ * The systemd unit this process runs under, or undefined when nothing will
+ * relaunch it. The restart endpoint kills the process, so it must first know
+ * that something will bring it back — a bare `dsh web` in a terminal would
+ * simply be gone.
+ */
+export function serviceUnit() {
+  if (process.env.INVOCATION_ID === void 0) return void 0;
+  try {
+    const cgroup = readFileSync("/proc/self/cgroup", "utf8");
+    // The innermost unit wins: the path also names the user manager
+    // (user@1000.service) and every slice in between.
+    const units = [...cgroup.matchAll(/([\w@.\-]+\.service)/g)];
+    return units.length === 0 ? void 0 : units[units.length - 1][1];
+  } catch {
+    return void 0;
+  }
+}
+
 function isLoopbackHost(host) {
   if (!host) return false;
   try {
@@ -224,6 +268,7 @@ export async function apply(ctx, config) {
   const HEALTH = prefix + "/headless/health";
   const ACTIVE = prefix + "/headless/active";
   const ADOPT = prefix + "/headless/adopt";
+  const RESTART = prefix + "/headless/restart";
 
   // Host version gate: dsh's loader already refuses an install outside
   // `dsh.engines.dsh`; this catches a host swapped underneath a working
@@ -377,12 +422,17 @@ export async function apply(ctx, config) {
       String(process.env.DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED || "").trim().toLowerCase(),
     );
 
-  /** `DSH_WEB_SUBMIT_TRANSPORT` overrides the plugin config (ops escape hatch). */
-  const transportPreference = String(
-    process.env.DSH_WEB_SUBMIT_TRANSPORT || config.transport || "auto",
-  )
-    .trim()
-    .toLowerCase();
+  /**
+   * `DSH_WEB_SUBMIT_TRANSPORT` overrides the plugin config (ops escape hatch).
+   * Re-read on every call: `transport` is a volatile field, so a settings-card
+   * write must be visible here without re-mounting the plugin.
+   */
+  function transportPreference() {
+    const configured = readVolatile(config.transport);
+    return String(process.env.DSH_WEB_SUBMIT_TRANSPORT || configured || "auto")
+      .trim()
+      .toLowerCase();
+  }
 
   function gatewayReady() {
     const gateway = gatewayService();
@@ -395,8 +445,9 @@ export async function apply(ctx, config) {
 
   function pickTransport() {
     if (transport !== void 0) return transport;
-    if (transportPreference === "api") transport = "api";
-    else if (transportPreference === "gateway") transport = "gateway";
+    const preference = transportPreference();
+    if (preference === "api") transport = "api";
+    else if (preference === "gateway") transport = "gateway";
     else transport = gatewayReady() ? "gateway" : "api";
     return transport;
   }
@@ -584,13 +635,57 @@ export async function apply(ctx, config) {
             routePrefix: prefix,
             port: ctx.webServer.port ?? null,
             transport: pickTransport(),
-            transportPreference,
+            transportPreference: transportPreference(),
             gatewayReady: gatewayReady(),
             credential: credential === void 0 ? "pending" : "session-cookie",
             dshVersion: dshVersion ?? null,
             supportedDsh: SUPPORTED_DSH_RANGE,
             compatible: dshCompatible ?? null,
+            restartManaged: serviceUnit() ?? null,
           });
+          return;
+        }
+
+        // POST /x/headless/restart : exit so the service manager relaunches this
+        // process — the way a new transport or a new plugin version takes effect.
+        if (req.method === "POST" && path === RESTART) {
+          const unit = serviceUnit();
+          if (unit === void 0) {
+            sendJson(res, 409, {
+              ok: false,
+              managed: false,
+              error: "this dsh web process is not supervised by systemd; restart it manually",
+            });
+            return;
+          }
+          let running;
+          try {
+            const list = await rpc("session.list", {});
+            running = ((list && list.items) || [])
+              .filter((item) => item.running === true && item.parentSessionId === void 0).length;
+          } catch (err) {
+            // Without a confirmed idle state a restart could kill a live turn.
+            sendJson(res, 500, {
+              ok: false,
+              managed: true,
+              error: "cannot confirm the process is idle: " + String((err && err.message) || err),
+            });
+            return;
+          }
+          if (running > 0) {
+            sendJson(res, 409, {
+              ok: false,
+              managed: true,
+              active: running,
+              error: running + " task(s) still running; refusing to restart",
+            });
+            return;
+          }
+          console.warn("dsh-web-submit: restart requested over HTTP; exiting for " + unit + " to relaunch");
+          sendJson(res, 202, { ok: true, restarting: true, managed: true, unit });
+          // A non-zero exit is what Restart=on-failure reacts to; the short delay
+          // lets this response flush before the process goes away.
+          setTimeout(() => process.exit(75), 300);
           return;
         }
 

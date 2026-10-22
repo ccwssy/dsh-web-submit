@@ -3,6 +3,41 @@
 This repository is a fork of `deepseek-ai/dsh-web-submit` (maintained by the maintainer).
 Version numbers follow the plugin's own `package.json`. Usage and install: [README.en.md](README.en.md).
 
+## v0.2.9
+
+- **New client half (Web UI)**: **Settings → General → “Headless transport”** (under “Thinking
+  language”) offers `Auto (gateway first)` / `gateway (in-process)` / `api (HTTP + signed cookie)` and
+  writes this plugin's `transport` entry in the profile's `cordis.patch.yml` — identical to editing
+  the config by hand.
+- **`transport` is now a schemastery `.volatile()` field**, so the next `pickTransport()` in the same
+  process reads the new value without re-mounting the plugin (`transportPreference` changed from an
+  apply-time constant to a per-call read, and `health` reports it live). The channel is still chosen
+  once and fixed — switching still needs a process restart.
+- **New `POST /x/headless/restart`**: exit so systemd relaunches the process. Two guards: any running
+  task (`session.list` running sessions, `count > 0`) answers `409`, and a process nothing supervises
+  (no `INVOCATION_ID`, or no unit in its cgroup) also answers `409`. When allowed it answers `202`
+  first, then calls `process.exit(75)` to trip `Restart=on-failure`. The cgroup parse takes the
+  **innermost** unit — the path also contains `user@1000.service`, and taking the first match names
+  the wrong unit.
+- **“重启 DSH” button in the sidebar footer with a live status dot**: one click restarts (layout and
+  colours follow [`1123762794/dsh-web-restart`](https://github.com/1123762794/dsh-web-restart), while
+  the restart itself goes through this plugin's HTTP endpoint + systemd — no external script or
+  PowerShell). The dot probes `GET /x/headless/health` every 5 s and the page reloads itself once the
+  process is back. The settings row carries a second restart button that asks for a second click.
+- **`health` gained `restartManaged`** (this process's unit name, `null` when unsupervised).
+- `package.json` gained `exports["./client"]` and `dsh.client` (`platform: web`; injects
+  `dsh-client-ui-settings`, `dsh-client-ui-settings-general`, `dsh-client-ui-sidebar`,
+  `dsh-client-locale`).
+- **Verified (dsh 0.2.1-rc.2, the production instance on 3080)**:
+  1. the settings row renders; selecting `api` writes `transport: api` into
+     `~/.dsh/profiles/web/cordis.patch.yml`, `health.transportPreference` flips to `api` immediately
+     while `transport` stays `gateway` (no restart yet);
+  2. after a restart `health.transport` is `api` (the forced channel takes effect);
+  3. clicking the sidebar button logs `restart requested over HTTP; exiting for dsh-web.service to
+     relaunch` → `Main process exited, code=exited, status=75/TEMPFAIL` → systemd `Started` again and
+     the page reloaded to “重启 DSH / dsh 在线”;
+  4. `health.restartManaged` reports `dsh-web.service`.
+
 ## v0.2.8
 
 - **New in-process `gateway` transport (preferred)**: when `typertGateway` exists and

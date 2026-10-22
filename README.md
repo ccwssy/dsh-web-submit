@@ -30,6 +30,7 @@
 | `GET` | `/x/headless/health` | 插件状态、凭证模式、宿主版本(`dshVersion` / `supportedDsh` / `compatible`) |
 | `GET` | `/x/headless/active` | 仍在本轮运行的会话(`{ok,count,active[]}`),重启前可用它确认没有任务在跑 |
 | `POST` | `/x/headless/adopt` | `{"sessionId":"session-..."}`:把已存在但没进侧栏的会话按 `cwd` 补登记到对应 workspace |
+| `POST` | `/x/headless/restart` | 让本进程退出、由 systemd 拉起(换通道/换插件版本用)。**有任务在跑时 `409` 拒绝;非 systemd 托管同样 `409`**;成功 `202` 后 `process.exit(75)` 触发 `Restart=on-failure` |
 
 仅接受回环请求:`Host` 头不是回环地址(`127.0.0.1` / `localhost`)时一律返回 403。
 这里只做回环校验、不额外鉴权(面向本机 CLI);插件内部调用 `/api` 所需的签名 Cookie 由插件自己换取,见下节。
@@ -48,6 +49,31 @@
 
 **为什么不在失败时切换**:`session/create` 与 `session/prompt` 若在另一条通道重放,同一个任务会提交两次,
 所以只在启动时择一,单次调用失败就如实报错。
+
+### 在 Web UI 里切换通道
+
+插件自带 Client 半:**设置 → 通用设置 → 「headless 通道」**(就在「思考语言」下面),
+三个选项 `自动(gateway 优先)` / `gateway(进程内直调)` / `api(HTTP + 签名 Cookie)`。
+选择写进 profile 的 `cordis.patch.yml` 里本插件条目的 `transport` 字段,与手工改配置等价。
+
+- `transport` 是 schemastery 的 **volatile 字段**:写完后同一进程内下一份 `pickTransport()` 立即读到新值,
+  不需要重挂插件。
+- 但通道**一经择一即固定**,所以已经提交过任务的进程仍需重启 `dsh web` 才真正换通道
+  (卡片副标题写明了这一点)。切换后看 `GET /x/headless/health` 的 `transportPreference` / `transport`:
+  前者立刻变,后者在重启前保持旧值。
+- `DSH_WEB_SUBMIT_TRANSPORT` 环境变量仍然优先于 UI/配置写入;要用它就必须重启。
+
+### 一键重启(侧边栏按钮)
+
+侧边栏底部有一个 **「重启 DSH」** 按钮(展开态显示文案 + 在线状态,收起态是圆形图标 + 角标圆点),
+点击即调 `POST /x/headless/restart`,进程退出后由 systemd 拉起,页面在 `health` 恢复后自动刷新。
+
+- 圆点每 5 秒探一次 `GET /x/headless/health`:绿 = 在线,红 = 离线(重启过程中会短暂变红)。
+- **有任务在跑时拒绝**:host 先查 `session.list` 的 running 会话,`count > 0` 一律 `409`,
+  不会为了换通道杀掉正在跑的任务。
+- **只在 systemd 托管时可用**:`health` 的 `restartManaged` 是本进程的单元名(`dsh-web.service`),
+  手工 `dsh web` 起的进程它是 `null`,此时端点返回 `409` 并让调用方自己重启 —— 否则点一下进程就没了。
+- 设置页「headless 通道」行内也有一个同样的重启按钮(带二次确认),切完通道就地重启最顺手。
 
 ### `api` 通道的凭证细节
 
@@ -356,7 +382,7 @@ zstdcat ~/.dsh/sessions/<workspace>/<sessionId>/session.v4.jsonl*.zstd |
 | `pollIntervalMs` | `1500` | SSE 背后的轮询间隔 |
 | `defaultPermission` | `""`(不套用) | 提交的会话默认套用的权限预设名;请求体带 `permission` 时以请求体为准 |
 | `allowUnsupportedDsh` | `false` | 宿主 dsh 超出支持范围时仍允许提交(默认拒绝,`409`);环境变量 `DSH_WEB_SUBMIT_ALLOW_UNSUPPORTED=1` 等价 |
-| `transport` | `"auto"` | `auto`(探测:gateway 优先)/`gateway`/`api`(强制);环境变量 `DSH_WEB_SUBMIT_TRANSPORT` 优先于配置 |
+| `transport` | `"auto"` | `auto`(探测:gateway 优先)/`gateway`/`api`(强制);**设置 → 通用设置 → headless 通道**里可直接切换(volatile,写入即读);环境变量 `DSH_WEB_SUBMIT_TRANSPORT` 优先于配置 |
 
 ## 变更历史
 
