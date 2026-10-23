@@ -15,3 +15,11 @@ log/
 AGENTS.md
 CLAUDE.md
 .dsh-chat-session
+
+# dsh 产物目录（不进 git）
+report/*
+!report/.gitkeep
+evidence/*
+!evidence/.gitkeep
+runs/*
+!runs/.gitkeep
