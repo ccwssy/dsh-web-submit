@@ -397,14 +397,3 @@ zstdcat ~/.dsh/sessions/<workspace>/<sessionId>/session.v4.jsonl*.zstd |
 ## 许可证
 
 MIT
-## 目录结构
-
-| 目录 | 内容 |
-|------|------|
-| `docs/` | 设计规格与 dsh 施工书（`dsh-web-submit-dsh-t<N>-prompt.md`） |
-| `log/` | 运行日志（仅 `.log`） |
-| `report/` | dsh 交付的散文报告 |
-| `evidence/` | dsh 交付的机读证据块 |
-| `runs/` | 运行过程产物：`probes/` 探针脚本、`outputs/` 命令输出、`dumps/` UI dump 与截图 |
-
-除 `docs/` 外均不入版本库（`.gitignore` 已覆盖，各留 `.gitkeep` 占位）。
