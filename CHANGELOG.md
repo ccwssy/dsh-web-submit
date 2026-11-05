@@ -32,6 +32,12 @@
      → `Main process exited, code=exited, status=75/TEMPFAIL` → systemd 重新 `Started`,页面自动刷新
      回到「重启 DSH / dsh 在线」;
   4. `health.restartManaged` 返回 `dsh-web.service`。
+- **实测(dsh 0.2.2-rc.1,2026-11-05 补)**:宿主 CLI 与 web 进程均升到 `0.2.2-rc.1` 后按升级
+  验收链复验 —— `health.compatible=true`(`transport: gateway`)、不带模型提交与带
+  `provider`/`model`/`reasoningEffort` 提交(`selectModel` 路径)均 `turn/end: completed`,
+  会话 ground truth 确认实际走 commandcode + `deepseek/deepseek-v4.1-flash`;
+  提交未改坏 profile 的 `agent-default-model`。README 版本适用表已补 `0.2.2-rc.1` 行,
+  引擎范围不变(`>=0.2.1-alpha.4 <0.3.0` 内,`0.3.0` 上限待下一次 minor 升级再验)。
 
 ## v0.2.8
 

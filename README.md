@@ -98,7 +98,7 @@
 
 ## 支持的 dsh 版本
 
-**支持范围:`>=0.2.1-alpha.4 <0.3.0`**(实测 `0.2.1-alpha.4` 与 `0.2.1-rc.2`)。范围外两层拦截:
+**支持范围:`>=0.2.1-alpha.4 <0.3.0`**(实测 `0.2.1-alpha.4`、`0.2.1-rc.2`、`0.2.2-rc.1`)。范围外两层拦截:
 
 1. **安装/启动期,由 dsh 自己把关**:`package.json` 的 `dsh.engines.dsh` 会被 dsh 的 plugin loader
    评估,不满足时拒绝安装/启动,并提示用 `dsh plugin allow-version` 做「精确版本」豁免。
@@ -111,6 +111,7 @@
 | dsh 版本 | `/api` 鉴权 | 端点与参数 | 状态 |
 |---|---|---|---|
 | `0.2.1-alpha.4` / `0.2.1-rc.2` | 必须带签名 Cookie,插件用进程内启动令牌自动换取 | typert 端点 `session/create`、`session/prompt`;参数包在 `args.request`;历史读取走 `session.page`(`address` + `throughSeq`) | 已端到端实测 |
+| `0.2.2-rc.1` | 同上(gateway 传输为主,`health` 报 `transport: gateway`) | 同上;`POST /x/headless` 带 `provider`/`model`/`reasoningEffort` 的 `selectModel` 路径已实测,提交后 `cordis.patch.yml` 既有 `agent-default-model` 不被改写 | 已端到端实测(2026-11-05) |
 | `< 0.2.1-alpha.4` | `/api` 在回环上开放,插件跳过换取直接请求 | 点号端点 `session.create`、`session.prompt`;参数放 payload 顶层;历史走 `session.history` | **不在支持范围**:代码里保留探测分支,但 manifest 会让 dsh 拒绝安装 |
 | `>= 0.3.0` | 未验证 | 未验证 | **不在支持范围**:实测后再放宽 |
 
