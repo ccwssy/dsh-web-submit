@@ -3,6 +3,24 @@
 本仓库是 `deepseek-ai/dsh-web-submit` 的 fork（维护者维护）。版本号跟随插件自身 `package.json`。
 用法与安装见 [README.md](README.md)。
 
+## v0.2.10
+
+- **修一个静默失败:经本插件的会话在 Web UI 侧栏「工作区」里看不到。**
+  背景:`ensureWorkspace()` 调 `workspace.create` 拿不到 workspaceId 时直接吞掉异常返回
+  `undefined`,提交路径随即以**裸 cwd** 建会话 —— 源码注释早已写明裸 cwd 会话**永远不会出现在侧栏**,
+  而失败既无日志也无重试,响应里也看不出来(现象:某工作区条目由 web 内核事后 resolve 建,
+  `sessionIds` 为空)。
+- **修法**:`ensureWorkspace()` 最多尝试 3 次(首次 + 重试 2 次),失败间隔 200ms(`setTimeout`
+  Promise 包装,不引依赖);RPC 抛错与「返回里没有 workspaceId」都算失败。三次全败时打一行
+  `console.warn`(含 `path` 与最后一次错误 message)再返回 `void 0`。成功路径与
+  `workspaceByPath` 缓存逻辑不变(命中缓存仍只调 1 次)。
+- **提交响应显式暴露归组状态**:`POST /x/headless` 的成功响应在拿不到 workspaceId 时多一个
+  `"workspace": "unresolved"` 字段;正常归组时字段集合与 v0.2.9 完全一致,不多加字段。
+  500 失败响应(如 `selectModel` 失败)未改。
+- `POST /x/headless/adopt` 复用同一函数,自动获得重试,无需单独改动。
+- **无 API 破坏**:未拿到 workspaceId 时仍按原样以 `{ cwd }` 建会话,行为只多了重试;
+  既有响应字段、字段语义、端点数量均不变。
+
 ## v0.2.9
 
 - **新增 Client 半(Web UI)**:**设置 → 通用设置 → 「headless 通道」**(在「思考语言」下方)

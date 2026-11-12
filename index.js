@@ -531,19 +531,42 @@ export async function apply(ctx, config) {
    * cwd never appears in its sidebar. Ask the workspace registry for the
    * workspace owning this path (creating it when absent) and cache its id;
    * harnesses without the workspace RPC return undefined and keep cwd creation.
+   *
+   * The registry call is a best-effort side channel, so a transient failure
+   * used to degrade silently into a sidebar-invisible session. It now gets
+   * two retries with a fixed backoff and a single warning line on total
+   * failure, which callers surface to the client as workspace "unresolved".
    */
   const workspaceByPath = new Map();
+  const WORKSPACE_ATTEMPTS = 3;
+  const WORKSPACE_RETRY_DELAY_MS = 200;
 
   async function ensureWorkspace(path) {
     if (workspaceByPath.has(path)) return workspaceByPath.get(path);
-    try {
-      const created = await rpc("workspace.create", { path });
-      const workspaceId = created && created.workspace ? created.workspace.workspaceId : void 0;
-      if (workspaceId !== void 0) workspaceByPath.set(path, workspaceId);
-      return workspaceId;
-    } catch {
-      return void 0;
+    let lastError;
+    for (let attempt = 1; attempt <= WORKSPACE_ATTEMPTS; attempt += 1) {
+      try {
+        const created = await rpc("workspace.create", { path });
+        const workspaceId = created && created.workspace ? created.workspace.workspaceId : void 0;
+        if (workspaceId !== void 0) {
+          workspaceByPath.set(path, workspaceId);
+          return workspaceId;
+        }
+        lastError = new Error("workspace.create returned no workspaceId");
+      } catch (err) {
+        lastError = err;
+      }
+      if (attempt < WORKSPACE_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, WORKSPACE_RETRY_DELAY_MS));
+      }
     }
+    const message = String((lastError && lastError.message) || lastError);
+    console.warn(
+      "dsh-web-submit: no workspace resolved for " + path + " after " + WORKSPACE_ATTEMPTS +
+        " attempts (" + message + "); the session is created with a bare cwd and stays " +
+        "invisible in the Web UI sidebar",
+    );
+    return void 0;
   }
 
   /**
@@ -873,6 +896,10 @@ export async function apply(ctx, config) {
               agentPreset: created.agentPreset || null,
               permission,
               model,
+              // Present only on the degraded path: no workspace id means the
+              // session was created with a bare cwd and will not show up in the
+              // Web UI sidebar, so the caller can tell it apart from success.
+              ...(workspaceId === void 0 ? { workspace: "unresolved" } : {}),
             });
           } catch (err) {
             sendJson(res, 500, { ok: false, error: String((err && err.message) || err) });
