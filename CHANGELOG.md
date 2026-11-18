@@ -3,6 +3,17 @@
 本仓库是 `deepseek-ai/dsh-web-submit` 的 fork（维护者维护）。版本号跟随插件自身 `package.json`。
 用法与安装见 [README.md](README.md)。
 
+## v0.2.11
+
+- **修 `GET /x/headless/status` 在 dsh 0.2.2-rc.3 上恒 500。**
+  背景:`readHistory()` 发 `session.page { throughSeq: MAX_SEQ }`,内核报错后按旧文案
+  `past cursor <N>` 匹配出 live cursor 重试。0.2.2-rc.3 把该错误文案改成了
+  `session history cut <cut> exceeds <cursor>`(如 `exceeds 22`),旧正则匹配不到,
+  插件直接把异常抛给 HTTP 层 → 500 `session history cut ... exceeds ...`。
+- **修法**:cursor 提取改为 `/past cursor (\d+)/ ?? /exceeds (\d+)/` 双正则,
+  新旧文案都能命中;通过 cursor 后重试逻辑与 v0.2.10 完全一致。
+- 无 API 破坏;端点数量、响应字段均不变。已装实例需 `dsh plugin --profile web update dsh-web-submit` 落盘。
+
 ## v0.2.10
 
 - **修一个静默失败:经本插件的会话在 Web UI 侧栏「工作区」里看不到。**

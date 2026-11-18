@@ -625,7 +625,10 @@ export async function apply(ctx, config) {
       } catch (error) {
         const message = String((error && error.message) || error);
         // The log cut may not sit past the live cursor; the Host reports the cursor.
-        const cursor = message.match(/past cursor (\d+)/);
+        // Text drifted across harness versions: "past cursor N" (older) and
+        // "session history cut N exceeds <cursor>" (dsh 0.2.2-rc.3, the number is
+        // the live cursor, not the offending cut). Match both.
+        const cursor = message.match(/past cursor (\d+)/) ?? message.match(/exceeds (\d+)/);
         if (cursor !== null) {
           request.throughSeq = Number(cursor[1]);
           continue;

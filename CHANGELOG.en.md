@@ -3,6 +3,37 @@
 This repository is a fork of `deepseek-ai/dsh-web-submit` (maintained by the maintainer).
 Version numbers follow the plugin's own `package.json`. Usage and install: [README.en.md](README.en.md).
 
+## v0.2.11
+
+- **Fix `GET /x/headless/status` returning 500 unconditionally on dsh 0.2.2-rc.3.**
+  Background: `readHistory()` posts `session.page { throughSeq: MAX_SEQ }` and, on rejection,
+  extracts the live cursor via the old message format `past cursor <N>` to retry. 0.2.2-rc.3
+  changed that error text to `session history cut <cut> exceeds <cursor>` (e.g. `exceeds 22`),
+  the old regex matched nothing and the plugin threw straight up to the HTTP layer →
+  500 `session history cut ... exceeds ...`.
+- **Fix**: cursor extraction is now `/past cursor (\d+)/ ?? /exceeds (\d+)/`, matching both
+  message formats; the retry path after a successful extract is unchanged from v0.2.10.
+- No API breakage; endpoint count and response fields unchanged. Installed instances need
+  `dsh plugin --profile web update dsh-web-submit` to land the fix.
+
+## v0.2.10
+
+- **Fix a silent failure: sessions created through this plugin never showed up in the Web UI
+  sidebar workspaces.** Background: `ensureWorkspace()` used to swallow `workspace.create`
+  errors and return `undefined`, so the submit path fell back to a bare-cwd session — which the
+  source comments note never appears in the sidebar — with no log, no retry and no signal in the
+  response.
+- **Fix**: `ensureWorkspace()` now tries up to 3 times (first attempt + 2 retries) with a 200ms
+  backoff. RPC errors and "no workspaceId in the response" both count as failure. Total failure
+  logs one `console.warn` (with `path` and the last error message) before returning `void 0`.
+  Success path and the `workspaceByPath` cache are unchanged (cache hit still costs 1 call).
+- **Submit response exposes the grouping state explicitly**: on the degraded path
+  `POST /x/headless` now carries an extra `"workspace": "unresolved"` field; the normal path
+  returns exactly the v0.2.9 field set, no extra field. 500 failure responses unchanged.
+- `POST /x/headless/adopt` reuses the same function and gets the retries for free.
+- **No API breakage**: without a workspaceId the plugin still creates the session with `{ cwd }`;
+  responses gain only the retry behavior. Endpoint count and field semantics unchanged.
+
 ## v0.2.9
 
 - **New client half (Web UI)**: **Settings → General → “Headless transport”** (under “Thinking
