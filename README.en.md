@@ -121,7 +121,7 @@ envelope this harness uses, so either generation works.
 
 ## Supported dsh versions
 
-**Supported range: `>=0.2.1-alpha.4 <0.3.0`** (tested on `0.2.1-alpha.4` and `0.2.1-rc.2`).
+**Supported range: `>=0.2.1-alpha.4 <0.3.0`** (tested on `0.2.1-alpha.4`, `0.2.1-rc.2`, `0.2.2-rc.1`, `0.2.2-rc.3` and `0.2.2-rc.4`; note: 0.2.2-rc.3 changed the `session.page` over-cut error text to `session history cut N exceeds <cursor>` — v0.2.11 matches both formats; 0.2.2-rc.4 appends a `session/title` event at the end of the event stream).
 Outside it, two gates refuse the work:
 
 1. **Install/startup, enforced by dsh itself**: `package.json`'s `dsh.engines.dsh` is evaluated by

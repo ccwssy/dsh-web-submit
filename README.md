@@ -112,6 +112,8 @@
 |---|---|---|---|
 | `0.2.1-alpha.4` / `0.2.1-rc.2` | 必须带签名 Cookie,插件用进程内启动令牌自动换取 | typert 端点 `session/create`、`session/prompt`;参数包在 `args.request`;历史读取走 `session.page`(`address` + `throughSeq`) | 已端到端实测 |
 | `0.2.2-rc.1` | 同上(gateway 传输为主,`health` 报 `transport: gateway`) | 同上;`POST /x/headless` 带 `provider`/`model`/`reasoningEffort` 的 `selectModel` 路径已实测,提交后 `cordis.patch.yml` 既有 `agent-default-model` 不被改写 | 已端到端实测(2026-11-05) |
+| `0.2.2-rc.3` | 同上 | 同上;新发现:内核把 `session.page` 超 `throughSeq` 的错误文案改成 `session history cut N exceeds <cursor>`(旧文案 `past cursor N` 已废),v0.2.11 起双正则兼容 | 已端到端实测(2026-11-18) |
+| `0.2.2-rc.4` | 同上(`health.dshVersion=0.2.2-rc.4`) | 同上;事件流末尾新增 `session/title`,status 摘要类消费者需自处理事件顺序(本仓 status 子命令已修) | 已端到端实测(2026-11-18) |
 | `< 0.2.1-alpha.4` | `/api` 在回环上开放,插件跳过换取直接请求 | 点号端点 `session.create`、`session.prompt`;参数放 payload 顶层;历史走 `session.history` | **不在支持范围**:代码里保留探测分支,但 manifest 会让 dsh 拒绝安装 |
 | `>= 0.3.0` | 未验证 | 未验证 | **不在支持范围**:实测后再放宽 |
 
